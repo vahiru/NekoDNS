@@ -1,0 +1,37 @@
+name = "nekodns"
+main = "src/worker/index.ts"
+compatibility_date = "2025-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nekodns"
+database_id = "replace-with-your-d1-database-id"
+migrations_dir = "migrations"
+
+[[queues.producers]]
+binding = "JOB_QUEUE"
+queue = "nekodns-jobs"
+
+[[queues.consumers]]
+queue = "nekodns-jobs"
+max_batch_size = 10
+max_batch_timeout = 30
+
+[[send_email]]
+name = "MAILER"
+destination_address = "admin@example.com"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+PARENT_DOMAIN = "is-cute.cat"
+EMAIL_FROM = "noreply@example.com"
+APP_ORIGIN = "http://localhost:8787"
+TURNSTILE_SITE_KEY = "1x00000000000000000000AA"

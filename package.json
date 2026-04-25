@@ -1,0 +1,43 @@
+{
+  "name": "nekodns",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "worker:dev": "wrangler dev",
+    "build": "vite build",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply nekodns --local",
+    "db:migrate": "wrangler d1 migrations apply nekodns",
+    "migrate:old": "tsx scripts/migrate-old-sqlite.ts"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "@hono/zod-validator": "^0.7.5",
+    "@mui/icons-material": "^7.3.5",
+    "@mui/material": "^7.3.5",
+    "hono": "^4.10.7",
+    "lucide-react": "^0.554.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260424.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.6",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "better-sqlite3": "^12.4.6",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.13",
+    "wrangler": "^4.49.0"
+  }
+}
