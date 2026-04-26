@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { deleteCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import type { AppBindings } from "../env";
@@ -11,17 +11,64 @@ import { verifyTurnstile } from "../services/turnstile";
 
 const auth = new Hono<AppBindings>();
 
+const USERNAME_REGEX = /^[\p{L}\p{N}_-]+$/u;
+
+function asText(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  return String(value);
+}
+
+const optionalTurnstileToken = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return undefined;
+    const token = value.trim();
+    return token.length > 0 ? token : undefined;
+  },
+  z.string().optional(),
+);
+
+async function readAuthBody(c: Context<AppBindings>) {
+  const contentType = c.req.header("content-type") ?? "";
+  const isFormBody = contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data");
+  if (isFormBody) {
+    const form = await c.req.parseBody().catch(() => null);
+    if (!form) return null;
+    return Object.fromEntries(
+      Object.entries(form).map(([key, value]) => {
+        const first = Array.isArray(value) ? value[0] : value;
+        return [key, typeof first === "string" ? first : ""];
+      }),
+    );
+  }
+  return await c.req.json().catch(() => null);
+}
+
 const registerSchema = z.object({
-  username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
-  email: z.string().trim().email().max(255),
-  password: z.string().min(10).max(200),
-  turnstileToken: z.string().optional(),
+  username: z.preprocess(
+    asText,
+    z
+      .string()
+      .trim()
+      .min(3, "用户名至少需要 3 个字符。")
+      .max(32, "用户名最多 32 个字符。")
+      .regex(USERNAME_REGEX, "用户名仅支持字母、数字、下划线和短横线。"),
+  ),
+  email: z.preprocess(
+    asText,
+    z.string().trim().email("邮箱格式不正确。").max(255, "邮箱长度不能超过 255。"),
+  ),
+  password: z.preprocess(
+    asText,
+    z.string().min(10, "密码至少需要 10 位。").max(200, "密码长度不能超过 200。"),
+  ),
+  turnstileToken: optionalTurnstileToken,
 });
 
 const loginSchema = z.object({
-  login: z.string().trim().min(1).max(255),
-  password: z.string().min(1).max(200),
-  turnstileToken: z.string().optional(),
+  login: z.preprocess(asText, z.string().trim().min(1, "请输入用户名或邮箱。").max(255)),
+  password: z.preprocess(asText, z.string().min(1, "请输入密码。").max(200)),
+  turnstileToken: optionalTurnstileToken,
 });
 
 auth.get("/public/config", (c) =>
@@ -32,7 +79,7 @@ auth.get("/public/config", (c) =>
 );
 
 auth.post("/auth/register", async (c) => {
-  const parsed = registerSchema.safeParse(await c.req.json().catch(() => null));
+  const parsed = registerSchema.safeParse(await readAuthBody(c));
   if (!parsed.success) return jsonError(c, 400, "注册信息无效。", parsed.error.flatten());
   if (!(await verifyTurnstile(c.env, parsed.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
 
@@ -80,7 +127,7 @@ auth.get("/auth/verify-email", async (c) => {
 });
 
 auth.post("/auth/login", async (c) => {
-  const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
+  const parsed = loginSchema.safeParse(await readAuthBody(c));
   if (!parsed.success) return jsonError(c, 400, "登录信息无效。");
   if (!(await verifyTurnstile(c.env, parsed.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
 
@@ -141,7 +188,12 @@ auth.get("/me", requireUser, (c) => {
 });
 
 auth.post("/auth/forgot-password", async (c) => {
-  const body = z.object({ email: z.string().email(), turnstileToken: z.string().optional() }).safeParse(await c.req.json().catch(() => null));
+  const body = z
+    .object({
+      email: z.preprocess(asText, z.string().trim().email("邮箱格式不正确。")),
+      turnstileToken: optionalTurnstileToken,
+    })
+    .safeParse(await readAuthBody(c));
   if (!body.success) return jsonError(c, 400, "邮箱无效。");
   if (!(await verifyTurnstile(c.env, body.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
 
@@ -164,7 +216,13 @@ auth.post("/auth/forgot-password", async (c) => {
 });
 
 auth.post("/auth/reset-password", async (c) => {
-  const body = z.object({ token: z.string(), password: z.string().min(10), turnstileToken: z.string().optional() }).safeParse(await c.req.json().catch(() => null));
+  const body = z
+    .object({
+      token: z.preprocess(asText, z.string().trim().min(1, "重置令牌不能为空。")),
+      password: z.preprocess(asText, z.string().min(10, "密码至少需要 10 位。")),
+      turnstileToken: optionalTurnstileToken,
+    })
+    .safeParse(await readAuthBody(c));
   if (!body.success) return jsonError(c, 400, "重置信息无效。");
   if (!(await verifyTurnstile(c.env, body.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
 
