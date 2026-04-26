@@ -11,7 +11,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "nekodns"
-database_id = "replace-with-your-d1-database-id"
+database_id = "91a53769-7741-4c16-8e6d-000f2bccf099"
 migrations_dir = "migrations"
 
 [[queues.producers]]
@@ -25,13 +25,13 @@ max_batch_timeout = 30
 
 [[send_email]]
 name = "MAILER"
-destination_address = "admin@example.com"
+destination_address = "admin@is-cute.cat"
 
 [triggers]
 crons = ["*/5 * * * *"]
 
 [vars]
 PARENT_DOMAIN = "is-cute.cat"
-EMAIL_FROM = "noreply@example.com"
-APP_ORIGIN = "http://localhost:8787"
-TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+EMAIL_FROM = "noreply@is-cute.cat"
+APP_ORIGIN = "https://nekodns.nekovahiru.workers.dev"
+TURNSTILE_SITE_KEY = "0x4AAAAAAB8RPRzRMcuipxBf"

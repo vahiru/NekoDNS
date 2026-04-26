@@ -5,6 +5,14 @@ export interface ApiConfig {
   turnstileSiteKey: string;
 }
 
+interface ApiErrorPayload {
+  message?: string;
+  details?: {
+    formErrors?: string[];
+    fieldErrors?: Record<string, string[] | undefined>;
+  };
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
@@ -15,9 +23,41 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (response.status === 204) return undefined as T;
-  const data = (await response.json().catch(() => ({}))) as { message?: string };
-  if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+  const data = (await response.json().catch(() => ({}))) as ApiErrorPayload;
+  if (!response.ok) {
+    const detail = pickValidationError(data.details);
+    throw new Error(detail ?? data.message ?? `HTTP ${response.status}`);
+  }
   return data as T;
+}
+
+function pickValidationError(details?: ApiErrorPayload["details"]): string | undefined {
+  if (!details) return undefined;
+  const firstFormError = details.formErrors?.find((item) => Boolean(item?.trim()));
+  if (firstFormError) return firstFormError;
+  if (!details.fieldErrors) return undefined;
+
+  for (const key of Object.keys(details.fieldErrors)) {
+    const fieldErrors = details.fieldErrors[key];
+    const firstFieldError = fieldErrors?.find((item) => Boolean(item?.trim()));
+    if (!firstFieldError) continue;
+    const label = fieldLabel(key);
+    return label ? `${label}：${firstFieldError}` : firstFieldError;
+  }
+  return undefined;
+}
+
+function fieldLabel(key: string): string | undefined {
+  const mapping: Record<string, string> = {
+    username: "用户名",
+    email: "邮箱",
+    password: "密码",
+    login: "账号",
+    token: "令牌",
+    reason: "原因",
+    subdomain: "域名",
+  };
+  return mapping[key];
 }
 
 export const client = {

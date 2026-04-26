@@ -8,6 +8,8 @@
     "worker:dev": "wrangler dev",
     "build": "vite build",
     "deploy": "wrangler deploy",
+    "deploy:dry-run": "wrangler deploy --dry-run --outdir dist/worker",
+    "deploy:prod": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-prod.ps1",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply nekodns --local",

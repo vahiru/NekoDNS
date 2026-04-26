@@ -3,4 +3,5 @@ dist
 .wrangler
 .npm-cache
 .dev.vars
+.env
 migrations/import-old-data.sql
