@@ -92,33 +92,50 @@ function AuthScreen({ config, onAuthed, toast }: { config?: ApiConfig; onAuthed:
   const initialTab = location.pathname.includes("reset-password") ? 3 : location.search.includes("verified=1") ? 0 : 0;
   const [tab, setTab] = useState(initialTab);
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0);
   const [form, setForm] = useState<Record<string, string>>({});
 
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
 
   const submit = async () => {
+    const turnstileResponse = turnstileToken.trim();
+    if (!turnstileResponse) {
+      toast("请先完成人机验证。", "error");
+      return;
+    }
+
+    let sentAuthRequest = false;
     try {
       if (tab === 0) {
-        await client.login({ login: form.login, password: form.password, turnstileToken });
+        sentAuthRequest = true;
+        await client.login({ login: form.login, password: form.password, turnstileToken: turnstileResponse });
         await onAuthed();
       }
       if (tab === 1) {
-        await client.register({ username: form.username, email: form.email, password: form.password, turnstileToken });
+        sentAuthRequest = true;
+        await client.register({ username: form.username, email: form.email, password: form.password, turnstileToken: turnstileResponse });
         toast("注册成功，请验证邮箱。");
         setTab(0);
       }
       if (tab === 2) {
-        await client.forgotPassword({ email: form.email, turnstileToken });
+        sentAuthRequest = true;
+        await client.forgotPassword({ email: form.email, turnstileToken: turnstileResponse });
         toast("如果邮箱存在，重置邮件已发送。");
       }
       if (tab === 3) {
         const token = new URLSearchParams(location.search).get("token") || form.token;
-        await client.resetPassword({ token, password: form.password, turnstileToken });
+        sentAuthRequest = true;
+        await client.resetPassword({ token, password: form.password, turnstileToken: turnstileResponse });
         toast("密码已更新。");
         setTab(0);
       }
     } catch (error) {
       toast(error instanceof Error ? error.message : "操作失败。", "error");
+    } finally {
+      if (sentAuthRequest) {
+        setTurnstileToken("");
+        setTurnstileWidgetKey((current) => current + 1);
+      }
     }
   };
 
@@ -156,7 +173,7 @@ function AuthScreen({ config, onAuthed, toast }: { config?: ApiConfig; onAuthed:
               <TextField label="新密码" type="password" value={form.password || ""} onChange={(event) => update("password", event.target.value)} />
             </Stack>
           )}
-          <TurnstileBox siteKey={config?.turnstileSiteKey} onToken={setTurnstileToken} />
+          <TurnstileBox siteKey={config?.turnstileSiteKey} onToken={setTurnstileToken} resetKey={turnstileWidgetKey} />
           <Button startIcon={<Send />} onClick={submit}>
             提交
           </Button>

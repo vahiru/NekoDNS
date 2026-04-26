@@ -4,14 +4,23 @@ import { useEffect, useRef, useState } from "react";
 declare global {
   interface Window {
     turnstile?: {
-      render: (selector: HTMLElement, options: { sitekey: string; callback: (token: string) => void }) => string;
+      render: (
+        selector: HTMLElement,
+        options: {
+          sitekey: string;
+          callback: (token: string) => void;
+          "expired-callback"?: () => void;
+          "error-callback"?: () => void;
+        },
+      ) => string;
       reset: (id?: string) => void;
     };
   }
 }
 
-export function TurnstileBox({ siteKey, onToken }: { siteKey?: string; onToken: (token: string) => void }) {
+export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: string; onToken: (token: string) => void; resetKey?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const widgetId = useRef<string | undefined>(undefined);
   const [rendered, setRendered] = useState(false);
 
   useEffect(() => {
@@ -24,7 +33,12 @@ export function TurnstileBox({ siteKey, onToken }: { siteKey?: string; onToken: 
 
     const load = () => {
       if (window.turnstile && ref.current && !rendered) {
-        window.turnstile.render(ref.current, { sitekey: siteKey, callback: onToken });
+        widgetId.current = window.turnstile.render(ref.current, {
+          sitekey: siteKey,
+          callback: onToken,
+          "expired-callback": () => onToken(""),
+          "error-callback": () => onToken(""),
+        });
         setRendered(true);
       }
     };
@@ -41,6 +55,17 @@ export function TurnstileBox({ siteKey, onToken }: { siteKey?: string; onToken: 
       load();
     }
   }, [onToken, rendered, siteKey]);
+
+  useEffect(() => {
+    if (!siteKey) return;
+    if (siteKey.startsWith("1x000")) {
+      onToken("dev-token");
+      return;
+    }
+    if (!widgetId.current || !window.turnstile) return;
+    onToken("");
+    window.turnstile.reset(widgetId.current);
+  }, [onToken, resetKey, siteKey]);
 
   return <Box ref={ref} sx={{ minHeight: siteKey?.startsWith("1x000") ? 0 : 70 }} />;
 }
