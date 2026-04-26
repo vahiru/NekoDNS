@@ -44,6 +44,13 @@ async function readAuthBody(c: Context<AppBindings>) {
   return await c.req.json().catch(() => null);
 }
 
+async function ensureTurnstile(c: Context<AppBindings>, token?: string) {
+  const checked = await verifyTurnstile(c.env, token, clientIp(c));
+  if (checked.success) return null;
+  const codes = checked.errorCodes.length ? checked.errorCodes.join(", ") : "unknown";
+  return jsonError(c, 403, `人机验证失败（${codes}）。`, { turnstile: checked });
+}
+
 const registerSchema = z.object({
   username: z.preprocess(
     asText,
@@ -81,7 +88,8 @@ auth.get("/public/config", (c) =>
 auth.post("/auth/register", async (c) => {
   const parsed = registerSchema.safeParse(await readAuthBody(c));
   if (!parsed.success) return jsonError(c, 400, "注册信息无效。", parsed.error.flatten());
-  if (!(await verifyTurnstile(c.env, parsed.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
+  const turnstileError = await ensureTurnstile(c, parsed.data.turnstileToken);
+  if (turnstileError) return turnstileError;
 
   const existing = await c.env.DB.prepare("SELECT id FROM users WHERE username = ? OR email = ?")
     .bind(parsed.data.username, parsed.data.email)
@@ -129,7 +137,8 @@ auth.get("/auth/verify-email", async (c) => {
 auth.post("/auth/login", async (c) => {
   const parsed = loginSchema.safeParse(await readAuthBody(c));
   if (!parsed.success) return jsonError(c, 400, "登录信息无效。");
-  if (!(await verifyTurnstile(c.env, parsed.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
+  const turnstileError = await ensureTurnstile(c, parsed.data.turnstileToken);
+  if (turnstileError) return turnstileError;
 
   const user = await c.env.DB.prepare("SELECT * FROM users WHERE username = ? OR email = ?")
     .bind(parsed.data.login, parsed.data.login)
@@ -195,7 +204,8 @@ auth.post("/auth/forgot-password", async (c) => {
     })
     .safeParse(await readAuthBody(c));
   if (!body.success) return jsonError(c, 400, "邮箱无效。");
-  if (!(await verifyTurnstile(c.env, body.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
+  const turnstileError = await ensureTurnstile(c, body.data.turnstileToken);
+  if (turnstileError) return turnstileError;
 
   const user = await c.env.DB.prepare("SELECT id, email FROM users WHERE email = ? AND email_verified_at IS NOT NULL")
     .bind(body.data.email)
@@ -224,7 +234,8 @@ auth.post("/auth/reset-password", async (c) => {
     })
     .safeParse(await readAuthBody(c));
   if (!body.success) return jsonError(c, 400, "重置信息无效。");
-  if (!(await verifyTurnstile(c.env, body.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
+  const turnstileError = await ensureTurnstile(c, body.data.turnstileToken);
+  if (turnstileError) return turnstileError;
 
   const password = await hashPassword(body.data.password);
   const result = await c.env.DB.prepare(

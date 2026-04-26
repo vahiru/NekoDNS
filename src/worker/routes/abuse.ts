@@ -20,7 +20,11 @@ abuse.post("/report-abuse", async (c) => {
     })
     .safeParse(await c.req.json().catch(() => null));
   if (!body.success) return jsonError(c, 400, "举报信息无效。");
-  if (!(await verifyTurnstile(c.env, body.data.turnstileToken, clientIp(c)))) return jsonError(c, 403, "人机验证失败。");
+  const turnstile = await verifyTurnstile(c.env, body.data.turnstileToken, clientIp(c));
+  if (!turnstile.success) {
+    const codes = turnstile.errorCodes.length ? turnstile.errorCodes.join(", ") : "unknown";
+    return jsonError(c, 403, `人机验证失败（${codes}）。`, { turnstile });
+  }
 
   let fullName: string;
   try {
