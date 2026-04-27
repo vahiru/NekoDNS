@@ -8,12 +8,17 @@ interface EmailPayload {
 }
 
 export async function sendSystemEmail(env: Env, payload: Record<string, unknown>) {
-  if (!env.MAILER) return;
-
   const { to, subject, html } = payload as EmailPayload;
   if (typeof to !== "string" || typeof subject !== "string" || typeof html !== "string") {
     throw new Error("Invalid email payload.");
   }
+
+  if (env.SMTP_PASS) {
+    await sendWithSendGrid(env, to, subject, html);
+    return;
+  }
+
+  if (!env.MAILER) return;
 
   const mime = [
     `From: NekoDNS <${env.EMAIL_FROM}>`,
@@ -27,6 +32,27 @@ export async function sendSystemEmail(env: Env, payload: Record<string, unknown>
 
   const message = new EmailMessage(env.EMAIL_FROM, to, mime);
   await env.MAILER.send(message);
+}
+
+async function sendWithSendGrid(env: Env, to: string, subject: string, html: string) {
+  const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.SMTP_PASS}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: env.EMAIL_FROM, name: "NekoDNS" },
+      subject,
+      content: [{ type: "text/html", value: html }],
+    }),
+  });
+
+  if (response.ok) return;
+
+  const errorText = await response.text().catch(() => "");
+  throw new Error(`SendGrid send failed (${response.status}): ${errorText || "unknown error"}`);
 }
 
 export function verificationEmail(origin: string, token: string) {
