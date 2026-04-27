@@ -34,4 +34,4 @@ crons = ["*/5 * * * *"]
 PARENT_DOMAIN = "is-cute.cat"
 EMAIL_FROM = "noreply@is-cute.cat"
 APP_ORIGIN = "https://everyone.is-cute.cat"
-TURNSTILE_SITE_KEY = "0x4AAAAAAB8RPRzRMcuipxBf"
+TURNSTILE_SITE_KEY = "0x4AAAAAADD9qKWUjuttcy57IWJlGU8r_nQ"
