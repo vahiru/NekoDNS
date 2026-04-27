@@ -16,6 +16,7 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_GROUP_CHAT_ID?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  RESEND_API_KEY?: string;
   SMTP_HOST?: string;
   SMTP_PORT?: string;
   SMTP_USER?: string;

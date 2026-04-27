@@ -14,6 +14,11 @@ export async function sendSystemEmail(env: Env, payload: Record<string, unknown>
     throw new Error("Invalid email payload.");
   }
 
+  if (env.RESEND_API_KEY) {
+    await sendWithResend(env, to, subject, html);
+    return;
+  }
+
   if (env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS) {
     await sendWithSmtp(env, to, subject, html);
     return;
@@ -33,6 +38,27 @@ export async function sendSystemEmail(env: Env, payload: Record<string, unknown>
 
   const message = new EmailMessage(env.EMAIL_FROM, to, mime);
   await env.MAILER.send(message);
+}
+
+async function sendWithResend(env: Env, to: string, subject: string, html: string) {
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [to],
+      subject,
+      html,
+    }),
+  });
+
+  if (response.ok) return;
+
+  const errorText = await response.text().catch(() => "");
+  throw new Error(`Resend send failed (${response.status}): ${errorText || "unknown error"}`);
 }
 
 async function sendWithSmtp(env: Env, to: string, subject: string, html: string) {
