@@ -6,7 +6,7 @@ import { audit } from "../audit";
 import { hashPassword, randomId, randomToken, sha256Hex, verifyPassword } from "../crypto";
 import { clientIp, jsonError, requireUser } from "../http";
 import { enqueueJob } from "../jobs";
-import { resetPasswordEmail, verificationEmail } from "../services/email";
+import { migrationVerificationEmail, resetPasswordEmail, verificationEmail } from "../services/email";
 import { verifyTurnstile } from "../services/turnstile";
 
 const auth = new Hono<AppBindings>();
@@ -69,7 +69,12 @@ const registerSchema = z.object({
     asText,
     z.string().min(10, "密码至少需要 10 位。").max(200, "密码长度不能超过 200。"),
   ),
+  confirmPassword: z.preprocess(asText, z.string().min(1, "请再次输入密码。").max(200)),
   turnstileToken: optionalTurnstileToken,
+})
+.refine((data) => data.password === data.confirmPassword, {
+  message: "两次输入的密码不一致。",
+  path: ["confirmPassword"],
 });
 
 const loginSchema = z.object({
@@ -117,8 +122,57 @@ auth.post("/auth/register", async (c) => {
   return c.json({ message: "注册成功，请查收验证邮件。" }, 201);
 });
 
+auth.post("/auth/legacy/reverify", async (c) => {
+  const body = z
+    .object({
+      login: z.preprocess(asText, z.string().trim().min(1, "请输入用户名或邮箱。").max(255)),
+    })
+    .safeParse(await readAuthBody(c));
+  if (!body.success) return jsonError(c, 400, "账号无效。");
+
+  const user = await c.env.DB.prepare(
+    `SELECT id, username, email, password_salt
+     FROM users
+     WHERE (username = ? OR email = ?)`,
+  )
+    .bind(body.data.login, body.data.login)
+    .first<{
+      id: string;
+      username: string;
+      email: string;
+      password_salt: string;
+    }>();
+
+  if (user?.password_salt === "legacy-bcrypt" && user.email && !user.email.endsWith("@legacy.invalid")) {
+    const verificationToken = randomToken();
+    const passwordResetToken = randomToken();
+    await c.env.DB.prepare(
+      `UPDATE users
+       SET email_verified_at = NULL,
+           email_verification_token_hash = ?,
+           email_verification_expires_at = datetime('now', '+1 hour'),
+           password_reset_token_hash = ?,
+           password_reset_expires_at = datetime('now', '+1 hour')
+       WHERE id = ?`,
+    )
+      .bind(await sha256Hex(verificationToken), await sha256Hex(passwordResetToken), user.id)
+      .run();
+
+    await enqueueJob(c, "email", {
+      to: user.email,
+      subject: "请重新验证你的 NekoDNS 邮箱",
+      html: migrationVerificationEmail(c.env.APP_ORIGIN, verificationToken, passwordResetToken),
+    });
+  }
+
+  return c.json({ message: "如果该迁移账户存在，我们已向其邮箱发送重新验证邮件。" });
+});
+
 auth.get("/auth/verify-email", async (c) => {
   const token = c.req.query("token");
+  const nextToken = c.req.query("nextToken")?.trim();
+  const flow = c.req.query("flow")?.trim();
+  const wantsJson = c.req.query("json") === "1";
   if (!token) return jsonError(c, 400, "缺少验证令牌。");
 
   const tokenHash = await sha256Hex(token);
@@ -131,6 +185,15 @@ auth.get("/auth/verify-email", async (c) => {
     .run();
 
   if (!result.meta.changes) return jsonError(c, 400, "验证链接无效或已过期。");
+  if (wantsJson) {
+    return c.json({
+      message: "邮箱已验证成功。",
+      redirectTo: flow === "migration" && nextToken ? `/reset-password?token=${encodeURIComponent(nextToken)}&migration=1` : undefined,
+    });
+  }
+  if (flow === "migration" && nextToken) {
+    return c.redirect(`/reset-password?token=${encodeURIComponent(nextToken)}&migration=1`);
+  }
   return c.redirect("/?verified=1");
 });
 
@@ -152,8 +215,15 @@ auth.post("/auth/login", async (c) => {
       email_verified_at: string | null;
     }>();
 
+  if (user?.password_salt === "legacy-bcrypt") {
+    return jsonError(c, 409, "由于服务端架构重构，您需要重新验证邮箱并重新设置登录密码后才能继续登录。", {
+      code: "legacy_migration_required",
+      email: user.email,
+      username: user.username,
+    });
+  }
+
   if (!user || !(await verifyPassword(parsed.data.password, user.password_salt, user.password_hash))) {
-    if (user?.password_salt === "legacy-bcrypt") return jsonError(c, 409, "旧版账户需要先通过邮箱重置密码。");
     return jsonError(c, 401, "用户名或密码错误。");
   }
   if (!user.email_verified_at) return jsonError(c, 403, "请先验证邮箱。");
@@ -196,6 +266,42 @@ auth.get("/me", requireUser, (c) => {
   });
 });
 
+auth.post("/me/change-password", requireUser, async (c) => {
+  const body = z
+    .object({
+      currentPassword: z.preprocess(asText, z.string().min(1, "请输入当前密码。").max(200)),
+      password: z.preprocess(asText, z.string().min(10, "新密码至少需要 10 位。").max(200)),
+      confirmPassword: z.preprocess(asText, z.string().min(1, "请再次输入新密码。").max(200)),
+    })
+    .refine((data) => data.password === data.confirmPassword, {
+      message: "两次输入的新密码不一致。",
+      path: ["confirmPassword"],
+    })
+    .safeParse(await readAuthBody(c));
+  if (!body.success) return jsonError(c, 400, "修改密码信息无效。", body.error.flatten());
+
+  const sessionUser = c.get("user");
+  const user = await c.env.DB.prepare("SELECT id, password_hash, password_salt FROM users WHERE id = ?")
+    .bind(sessionUser.id)
+    .first<{ id: string; password_hash: string; password_salt: string }>();
+
+  if (!user) return jsonError(c, 404, "用户不存在。");
+  if (user.password_salt === "legacy-bcrypt") {
+    return jsonError(c, 409, "迁移账户需要先完成邮箱验证并通过找回密码设置新的登录密码。");
+  }
+  if (!(await verifyPassword(body.data.currentPassword, user.password_salt, user.password_hash))) {
+    return jsonError(c, 400, "当前密码不正确。");
+  }
+
+  const password = await hashPassword(body.data.password);
+  await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_salt = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(password.hash, password.salt, user.id)
+    .run();
+
+  await audit(c, "auth.change_password", "user", user.id);
+  return c.json({ message: "密码已更新。" });
+});
+
 auth.post("/auth/forgot-password", async (c) => {
   const body = z
     .object({
@@ -230,7 +336,12 @@ auth.post("/auth/reset-password", async (c) => {
     .object({
       token: z.preprocess(asText, z.string().trim().min(1, "重置令牌不能为空。")),
       password: z.preprocess(asText, z.string().min(10, "密码至少需要 10 位。")),
+      confirmPassword: z.preprocess(asText, z.string().min(1, "请再次输入新密码。")),
       turnstileToken: optionalTurnstileToken,
+    })
+    .refine((data) => data.password === data.confirmPassword, {
+      message: "两次输入的密码不一致。",
+      path: ["confirmPassword"],
     })
     .safeParse(await readAuthBody(c));
   if (!body.success) return jsonError(c, 400, "重置信息无效。");

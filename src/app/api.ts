@@ -8,9 +8,24 @@ export interface ApiConfig {
 interface ApiErrorPayload {
   message?: string;
   details?: {
+    code?: string;
+    email?: string;
+    username?: string;
     formErrors?: string[];
     fieldErrors?: Record<string, string[] | undefined>;
   };
+}
+
+export class ApiError extends Error {
+  code?: string;
+  details?: ApiErrorPayload["details"];
+
+  constructor(message: string, payload?: ApiErrorPayload) {
+    super(message);
+    this.name = "ApiError";
+    this.code = payload?.details?.code;
+    this.details = payload?.details;
+  }
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -26,7 +41,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const data = (await response.json().catch(() => ({}))) as ApiErrorPayload;
   if (!response.ok) {
     const detail = pickValidationError(data.details);
-    throw new Error(detail ?? data.message ?? `HTTP ${response.status}`);
+    throw new ApiError(detail ?? data.message ?? `HTTP ${response.status}`, data);
   }
   return data as T;
 }
@@ -52,6 +67,8 @@ function fieldLabel(key: string): string | undefined {
     username: "用户名",
     email: "邮箱",
     password: "密码",
+    currentPassword: "当前密码",
+    confirmPassword: "确认密码",
     login: "账号",
     token: "令牌",
     reason: "原因",
@@ -65,9 +82,17 @@ export const client = {
   me: () => api<PublicUser>("/me"),
   login: (body: unknown) => api<{ message: string }>("/auth/login", { method: "POST", body: JSON.stringify(body) }),
   register: (body: unknown) => api<{ message: string }>("/auth/register", { method: "POST", body: JSON.stringify(body) }),
+  legacyReverify: (body: unknown) => api<{ message: string }>("/auth/legacy/reverify", { method: "POST", body: JSON.stringify(body) }),
+  verifyEmail: (token: string, options?: { flow?: string; nextToken?: string }) => {
+    const query = new URLSearchParams({ token, json: "1" });
+    if (options?.flow) query.set("flow", options.flow);
+    if (options?.nextToken) query.set("nextToken", options.nextToken);
+    return api<{ message: string; redirectTo?: string }>(`/auth/verify-email?${query.toString()}`);
+  },
   logout: () => api<{ message: string }>("/auth/logout", { method: "POST" }),
   forgotPassword: (body: unknown) => api<{ message: string }>("/auth/forgot-password", { method: "POST", body: JSON.stringify(body) }),
   resetPassword: (body: unknown) => api<{ message: string }>("/auth/reset-password", { method: "POST", body: JSON.stringify(body) }),
+  changePassword: (body: unknown) => api<{ message: string }>("/me/change-password", { method: "POST", body: JSON.stringify(body) }),
   records: () => api<any[]>("/dns/records"),
   applications: () => api<any[]>("/applications"),
   submitApplication: (body: unknown) => api<{ id: string; message: string }>("/dns/applications", { method: "POST", body: JSON.stringify(body) }),

@@ -14,7 +14,8 @@
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply nekodns --local",
     "db:migrate": "wrangler d1 migrations apply nekodns",
-    "migrate:old": "tsx scripts/migrate-old-sqlite.ts"
+    "migrate:old": "tsx scripts/migrate-old-sqlite.ts",
+    "verify:migration": "tsx scripts/verify-migration.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

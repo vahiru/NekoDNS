@@ -8,6 +8,39 @@ interface EmailPayload {
   html?: unknown;
 }
 
+interface VerificationEmailOptions {
+  title?: string;
+  intro?: string;
+  flow?: "default" | "migration";
+}
+
+const EMAIL_STYLE = `
+  body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+  .container { max-width: 600px; margin: 20px auto; padding: 40px; border: 1px solid #e0e0e0; border-radius: 16px; background-color: #ffffff; }
+  h1 { color: #386A20; font-size: 24px; font-weight: 700; margin-top: 0; }
+  p { margin: 16px 0; }
+  .button { display: inline-block; padding: 12px 32px; background-color: #386A20; color: #ffffff !important; text-decoration: none; border-radius: 999px; font-weight: 600; margin: 20px 0; }
+  .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #888; }
+  .link { color: #386A20; word-break: break-all; }
+`;
+
+function wrapLayout(content: string) {
+  return `
+    <html>
+      <head><style>${EMAIL_STYLE}</style></head>
+      <body>
+        <div class="container">
+          ${content}
+          <div class="footer">
+            此邮件由 NekoDNS 系统自动发出，请勿直接回复。<br>
+            如果您没有进行相关操作，请忽略此邮件。
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
 export async function sendSystemEmail(env: Env, payload: Record<string, unknown>) {
   const { to, subject, html } = payload as EmailPayload;
   if (typeof to !== "string" || typeof subject !== "string" || typeof html !== "string") {
@@ -177,18 +210,69 @@ function dotStuff(value: string) {
   return value.replace(/^\./gm, "..");
 }
 
-export function verificationEmail(origin: string, token: string) {
-  const url = `${origin}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
-  return `<h1>验证你的 NekoDNS 邮箱</h1><p>点击下面的链接完成验证：</p><p><a href="${url}">${url}</a></p><p>链接将在 1 小时后失效。</p>`;
+export function verificationEmail(origin: string, token: string, options: VerificationEmailOptions = {}) {
+  const flow = options.flow === "migration" ? "&flow=migration" : "";
+  const url = `${origin}/verify-email?token=${encodeURIComponent(token)}${flow}`;
+  const title = options.title ?? "验证您的 NekoDNS 邮箱地址";
+  const intro = options.intro ?? "感谢您注册 NekoDNS。为了激活您的账户并开始使用动态域名服务，请点击下方按钮完成邮箱验证：";
+  
+  return wrapLayout(`
+    <h1>${title}</h1>
+    <p>${intro}</p>
+    <a href="${url}" class="button">立即验证邮箱</a>
+    <p>如果按钮无法点击，请复制以下链接粘贴至浏览器访问：</p>
+    <p><a href="${url}" class="link">${url}</a></p>
+    <p>此链接将在 1 小时内有效。</p>
+  `);
+}
+
+export function migrationVerificationEmail(origin: string, token: string, passwordResetToken: string) {
+  const url = `${origin}/verify-email?token=${encodeURIComponent(token)}&flow=migration&nextToken=${encodeURIComponent(passwordResetToken)}`;
+  return wrapLayout(`
+    <h1>请重新验证您的 NekoDNS 邮箱</h1>
+    <p>为了提供更安全稳定的服务，NekoDNS 已完成核心系统架构升级。基于安全性考量，我们需要您重新验证您的邮箱地址。</p>
+    <p>验证完成后，系统将立即引导您设置全新的登录密码。</p>
+    <a href="${url}" class="button">重新验证并设置密码</a>
+    <p>如果按钮无法点击，请复制以下链接：</p>
+    <p><a href="${url}" class="link">${url}</a></p>
+    <p>此链接将在 1 小时内有效。</p>
+  `);
+}
+
+export function legacyMigrationVerificationEmail(origin: string, token: string) {
+  return verificationEmail(origin, token, {
+    title: "安全迁移：重新验证您的邮箱",
+    intro: "系统检测到您的账户需要进行安全性迁移。请点击下方按钮重新验证邮箱，随后您将可以设置新的登录密码并继续使用服务。",
+    flow: "migration",
+  });
 }
 
 export function resetPasswordEmail(origin: string, token: string) {
   const url = `${origin}/reset-password?token=${encodeURIComponent(token)}`;
-  return `<h1>重置你的 NekoDNS 密码</h1><p>点击下面的链接设置新密码：</p><p><a href="${url}">${url}</a></p><p>链接将在 1 小时后失效。</p>`;
+  return wrapLayout(`
+    <h1>重置您的 NekoDNS 登录密码</h1>
+    <p>我们收到了重置您账户密码的请求。请点击下方按钮设置新密码：</p>
+    <a href="${url}" class="button">重置我的密码</a>
+    <p>如果这不是您本人发起的操作，请忽略此邮件，您的密码将保持不变。</p>
+    <p>链接有效时间：1 小时。</p>
+    <p><a href="${url}" class="link">${url}</a></p>
+  `);
 }
 
 export function applicationResultEmail(domain: string, status: string, reason?: string) {
-  return `<h1>域名申请${status}</h1><p><strong>${domain}</strong> 的处理结果：${status}</p>${reason ? `<p>说明：${reason}</p>` : ""}`;
+  const isApproved = status === "approved" || status === "applied";
+  const statusText = isApproved ? "已通过审批" : "未通过审批";
+  const title = `域名申请处理结果：${statusText}`;
+
+  return wrapLayout(`
+    <h1>${title}</h1>
+    <p>您好，关于您申请的域名 <strong>${domain}</strong>，系统处理结果如下：</p>
+    <p style="font-size: 18px; font-weight: bold; color: ${isApproved ? "#386A20" : "#BA1A1A"};">
+      状态：${statusText}
+    </p>
+    ${reason ? `<p><strong>审批说明：</strong>${reason}</p>` : ""}
+    ${isApproved ? `<p>现在您可以登录控制面板管理该记录的解析目标。</p>` : `<p>如有疑问，您可以尝试修改申请信息后重新提交。</p>`}
+  `);
 }
 
 function encodeHeader(value: string) {

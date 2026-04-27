@@ -1,38 +1,83 @@
-import { createTheme } from "@mui/material/styles";
+import { createTheme, alpha } from "@mui/material/styles";
 
 export function createNekoTheme() {
+  const primary = "#386A20";
+  const secondary = "#55624C";
+  const error = "#BA1A1A";
+  const surface = "#FAFDF2";
+  const surfaceContainer = "#F0F3E8"; // M3 Surface Container
+  const surfaceContainerHigh = "#EAECE3";
+
   return createTheme({
     palette: {
       mode: "light",
-      primary: { main: "#386A20", light: "#A6D984", dark: "#205107", contrastText: "#FFFFFF" },
-      secondary: { main: "#55624C", light: "#D9E7CB", dark: "#3D4A35", contrastText: "#FFFFFF" },
-      error: { main: "#BA1A1A", light: "#FFDAD6", dark: "#93000A" },
-      warning: { main: "#8B5000", light: "#FFDDB4", dark: "#703800" },
-      info: { main: "#006C9C", light: "#C7E7FF", dark: "#004D71" },
-      success: { main: "#386A20", light: "#D9E7CB", dark: "#205107" },
-      background: { default: "#FAFDF2", paper: "#FEFFF7" },
-      text: { primary: "#1A1C18", secondary: "#44483D" },
+      primary: {
+        main: primary,
+        light: "#A6D984",
+        dark: "#205107",
+        contrastText: "#FFFFFF",
+      },
+      secondary: {
+        main: secondary,
+        light: "#D9E7CB",
+        dark: "#3D4A35",
+        contrastText: "#FFFFFF",
+      },
+      error: {
+        main: error,
+        light: "#FFDAD6",
+        dark: "#93000A",
+      },
+      background: {
+        default: surface,
+        paper: "#FEFFF7",
+      },
+      text: {
+        primary: "#1A1C18",
+        secondary: "#44483D",
+      },
       divider: "#C8CBBF",
     },
-    shape: { borderRadius: 20 },
+    shape: { borderRadius: 16 },
     typography: {
       fontFamily: `"Inter", "Roboto", "Noto Sans SC", system-ui, sans-serif`,
-      h4: { fontWeight: 760, letterSpacing: 0 },
-      h5: { fontWeight: 740, letterSpacing: 0 },
-      h6: { fontWeight: 700, letterSpacing: 0 },
-      button: { textTransform: "none", fontWeight: 700, letterSpacing: 0 },
+      h4: { fontWeight: 700, letterSpacing: -0.5 },
+      h5: { fontWeight: 700, letterSpacing: -0.25 },
+      h6: { fontWeight: 600, letterSpacing: 0 },
+      button: { textTransform: "none", fontWeight: 600, letterSpacing: 0.1 },
     },
     components: {
       MuiButton: {
-        defaultProps: { variant: "contained" },
+        defaultProps: { variant: "contained", disableElevation: true },
         styleOverrides: {
-          root: { borderRadius: 999, minHeight: 40, boxShadow: "none" },
+          root: {
+            borderRadius: 999,
+            padding: "8px 24px",
+            minHeight: 40,
+            fontSize: "0.9375rem",
+          },
+          containedPrimary: {
+            "&:hover": {
+              backgroundColor: alpha(primary, 0.92),
+            },
+          },
+          outlined: {
+            borderWidth: "1px",
+            "&:hover": {
+              borderWidth: "1px",
+              backgroundColor: alpha(secondary, 0.08),
+            },
+          },
         },
       },
       MuiPaper: {
+        defaultProps: { elevation: 0 },
         styleOverrides: {
-          root: { backgroundImage: "none" },
-          rounded: { borderRadius: 24 },
+          root: {
+            backgroundImage: "none",
+            backgroundColor: surfaceContainer,
+          },
+          rounded: { borderRadius: 28 }, // MD3 Card Rounding
         },
       },
       MuiTextField: {
@@ -40,15 +85,76 @@ export function createNekoTheme() {
       },
       MuiFilledInput: {
         styleOverrides: {
-          root: { borderRadius: 16, overflow: "hidden" },
+          root: {
+            borderRadius: "12px 12px 4px 4px",
+            backgroundColor: surfaceContainerHigh,
+            "&:hover": {
+              backgroundColor: alpha(surfaceContainerHigh, 0.8),
+            },
+            "&.Mui-focused": {
+              backgroundColor: surfaceContainerHigh,
+            },
+            "&:before": { borderBottomColor: "#C8CBBF" },
+          },
         },
       },
       MuiChip: {
-        styleOverrides: { root: { borderRadius: 999, fontWeight: 650 } },
+        styleOverrides: {
+          root: {
+            borderRadius: 8,
+            fontWeight: 600,
+          },
+          filledSuccess: {
+            backgroundColor: "#D9E7CB",
+            color: "#205107",
+          },
+        },
       },
       MuiTableCell: {
         styleOverrides: {
-          head: { fontWeight: 800, color: "#44483D" },
+          root: {
+            borderBottom: `1px solid ${alpha("#C8CBBF", 0.5)}`,
+          },
+          head: {
+            fontWeight: 700,
+            color: "#44483D",
+            backgroundColor: surfaceContainerHigh,
+          },
+        },
+      },
+      MuiAppBar: {
+        styleOverrides: {
+          root: {
+            backgroundColor: alpha(surface, 0.8),
+            backdropFilter: "blur(12px)",
+            borderBottom: `1px solid ${alpha("#C8CBBF", 0.3)}`,
+            color: "#1A1C18",
+          },
+        },
+      },
+      MuiDialog: {
+        styleOverrides: {
+          paper: {
+            borderRadius: 28,
+            backgroundColor: surfaceContainer,
+            padding: 8,
+          },
+        },
+      },
+      MuiTabs: {
+        styleOverrides: {
+          indicator: {
+            height: 3,
+            borderRadius: "3px 3px 0 0",
+          },
+        },
+      },
+      MuiTab: {
+        styleOverrides: {
+          root: {
+            fontWeight: 600,
+            minHeight: 48,
+          },
         },
       },
     },
