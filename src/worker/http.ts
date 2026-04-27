@@ -7,6 +7,16 @@ export function jsonError(c: Context, status: number, message: string, details?:
   return c.json({ message, details }, status as never);
 }
 
+export function errorDetails(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+    };
+  }
+  return { message: String(error) };
+}
+
 export async function requireUser(c: Context<AppBindings>, next: Next) {
   const token = getCookie(c, "nekodns_session");
   if (!token) return jsonError(c, 401, "请先登录。");

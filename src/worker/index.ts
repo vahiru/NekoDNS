@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppBindings, Env } from "./env";
 import type { JobMessage } from "../shared/types";
 import { randomId } from "./crypto";
+import { errorDetails, jsonError } from "./http";
 import { processJob, replayDueOutbox } from "./jobs";
 import admin from "./routes/admin";
 import auth from "./routes/auth";
@@ -15,6 +16,13 @@ const app = new Hono<AppBindings>();
 app.use("*", async (c, next) => {
   c.set("requestId", randomId("req"));
   await next();
+});
+
+app.onError((error, c) => {
+  const requestId = c.get("requestId");
+  const details = errorDetails(error);
+  console.error("Unhandled worker error", { requestId, path: c.req.path, ...details, error });
+  return jsonError(c, 500, `服务器内部错误（${requestId}）：${details.message}`, { requestId, error: details });
 });
 
 app.route("/api", auth);
