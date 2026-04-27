@@ -131,7 +131,7 @@ auth.get("/auth/verify-email", async (c) => {
     .run();
 
   if (!result.meta.changes) return jsonError(c, 400, "验证链接无效或已过期。");
-  return c.redirect("/login?verified=1");
+  return c.redirect("/?verified=1");
 });
 
 auth.post("/auth/login", async (c) => {

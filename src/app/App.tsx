@@ -89,7 +89,8 @@ function Centered({ title, subtitle }: { title: string; subtitle: string }) {
 }
 
 function AuthScreen({ config, onAuthed, toast }: { config?: ApiConfig; onAuthed: () => void; toast: (text: string, severity?: "success" | "error") => void }) {
-  const initialTab = location.pathname.includes("reset-password") ? 3 : location.search.includes("verified=1") ? 0 : 0;
+  const verified = new URLSearchParams(location.search).get("verified") === "1";
+  const initialTab = location.pathname.includes("reset-password") ? 3 : verified ? 0 : 0;
   const [tab, setTab] = useState(initialTab);
   const [turnstileToken, setTurnstileToken] = useState("");
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0);
@@ -147,6 +148,7 @@ function AuthScreen({ config, onAuthed, toast }: { config?: ApiConfig; onAuthed:
             <Typography variant="h4">NekoDNS</Typography>
             <Typography color="text.secondary">Serverless domain registry</Typography>
           </Box>
+          {verified && <Alert severity="success">邮箱已验证成功。现在可以登录，或者使用“找回密码”继续重置密码。</Alert>}
           <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="scrollable">
             <Tab label="登录" />
             <Tab label="注册" />
