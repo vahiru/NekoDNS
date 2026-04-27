@@ -1,4 +1,5 @@
 const encoder = new TextEncoder();
+const PBKDF2_ITERATIONS = 100_000;
 
 export function randomId(prefix = ""): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -23,7 +24,7 @@ export async function hashPassword(password: string, salt = randomToken()): Prom
       name: "PBKDF2",
       hash: "SHA-256",
       salt: encoder.encode(salt),
-      iterations: 210_000,
+      iterations: PBKDF2_ITERATIONS,
     },
     key,
     256,
