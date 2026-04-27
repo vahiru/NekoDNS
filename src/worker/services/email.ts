@@ -178,7 +178,7 @@ function dotStuff(value: string) {
 }
 
 export function verificationEmail(origin: string, token: string) {
-  const url = `${origin}/verify-email?token=${encodeURIComponent(token)}`;
+  const url = `${origin}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
   return `<h1>验证你的 NekoDNS 邮箱</h1><p>点击下面的链接完成验证：</p><p><a href="${url}">${url}</a></p><p>链接将在 1 小时后失效。</p>`;
 }
 

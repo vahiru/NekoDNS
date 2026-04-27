@@ -45,6 +45,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (location.pathname.includes("verify-email")) {
+      const token = new URLSearchParams(location.search).get("token");
+      if (token) {
+        location.replace(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+        return;
+      }
+    }
     client.config().then(setConfig).catch(() => undefined);
     refreshUser();
   }, [refreshUser]);
