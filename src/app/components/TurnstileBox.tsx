@@ -1,4 +1,4 @@
-import { Box } from "@mui/material";
+import { Box, useMediaQuery, useTheme } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
 
 declare global {
@@ -11,6 +11,7 @@ declare global {
           callback: (token: string) => void;
           "expired-callback"?: () => void;
           "error-callback"?: () => void;
+          size?: "normal" | "compact";
         },
       ) => string;
       reset: (id?: string) => void;
@@ -22,6 +23,8 @@ export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: str
   const ref = useRef<HTMLDivElement | null>(null);
   const widgetId = useRef<string | undefined>(undefined);
   const [rendered, setRendered] = useState(false);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   useEffect(() => {
     if (!siteKey || rendered || !ref.current) return;
@@ -38,6 +41,7 @@ export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: str
           callback: onToken,
           "expired-callback": () => onToken(""),
           "error-callback": () => onToken(""),
+          size: isMobile ? "compact" : "normal",
         });
         setRendered(true);
       }
@@ -54,7 +58,7 @@ export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: str
     } else {
       load();
     }
-  }, [onToken, rendered, siteKey]);
+  }, [onToken, rendered, siteKey, isMobile]);
 
   useEffect(() => {
     if (!siteKey) return;
@@ -67,5 +71,5 @@ export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: str
     window.turnstile.reset(widgetId.current);
   }, [onToken, resetKey, siteKey]);
 
-  return <Box ref={ref} sx={{ minHeight: siteKey?.startsWith("1x000") ? 0 : 70 }} />;
+  return <Box ref={ref} sx={{ minHeight: isMobile ? 120 : 70, display: "flex", justifyContent: "center" }} />;
 }

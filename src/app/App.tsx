@@ -261,7 +261,7 @@ function AuthScreen({ config, onAuthed, toast }: { config?: ApiConfig; onAuthed:
 
   return (
     <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "background.default", p: 2 }}>
-      <Paper sx={{ width: "min(100%, 520px)", p: { xs: 3, sm: 6 } }}>
+      <Paper sx={{ width: "min(100%, 520px)", p: { xs: 2.5, sm: 6 } }}>
         <Stack spacing={4}>
           <Box>
             <Typography variant="h4" color="primary" sx={{ fontWeight: 800 }}>NekoDNS</Typography>
@@ -291,7 +291,7 @@ function AuthScreen({ config, onAuthed, toast }: { config?: ApiConfig; onAuthed:
             </Stack>
           )}
 
-          <Box sx={{ bgcolor: "background.default", borderRadius: 4, p: 1, display: "flex", justifyContent: "center" }}>
+          <Box sx={{ display: "flex", justifyContent: "center" }}>
             <TurnstileBox siteKey={config?.turnstileSiteKey} onToken={setTurnstileToken} resetKey={turnstileWidgetKey} />
           </Box>
 
