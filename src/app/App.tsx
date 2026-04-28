@@ -626,8 +626,15 @@ function AdminPanel({ toast }: { toast: (text: string, severity?: "success" | "e
   return (
     <Stack spacing={4}>
       <Header title="系统管理" subtitle="全局监控与资源调度中心" action={<Button variant="contained" startIcon={<Refresh />} onClick={refresh}>全量刷新</Button>} />
-      <Paper sx={{ borderRadius: 6, overflow: "hidden" }}>
-        <Tabs value={tab} onChange={(_, value) => setTab(value)} variant="fullWidth" sx={{ bgcolor: "background.paper" }}>
+      <Paper sx={{ borderRadius: "16px", overflow: "hidden", border: "1px solid", borderColor: "divider" }}>
+        <Tabs 
+          value={tab} 
+          onChange={(_, value) => setTab(value)} 
+          variant="scrollable" 
+          scrollButtons="auto" 
+          allowScrollButtonsMobile
+          sx={{ bgcolor: "background.paper" }}
+        >
           <Tab label="待办申请" />
           <Tab label="用户管理" />
           <Tab label="DNS 概览" />
