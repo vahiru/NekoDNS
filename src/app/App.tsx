@@ -831,27 +831,38 @@ function Header({ title, subtitle, action }: { title: string; subtitle?: string;
 
 function DataTable({ columns, rows, render }: { columns: string[]; rows: any[]; render: (row: any) => ReactNode }) {
   return (
-    <TableContainer component={Paper} sx={{ borderRadius: 6, overflow: "hidden" }}>
-      <Table>
-        <TableHead>
-          <TableRow>
-            {columns.map((column) => (
-              <TableCell key={column} sx={{ whiteSpace: "nowrap" }}>{column}</TableCell>
-            ))}
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.length ? (
-            rows.map((row) => <TableRow key={row.id} hover>{render(row)}</TableRow>)
-          ) : (
+    <TableContainer 
+      component={Paper} 
+      sx={{ 
+        borderRadius: "16px", 
+        border: "1px solid", 
+        borderColor: "divider", 
+        overflow: "hidden",
+        width: "100%"
+      }}
+    >
+      <Box sx={{ overflowX: "auto" }}>
+        <Table>
+          <TableHead>
             <TableRow>
-              <TableCell colSpan={columns.length} align="center" sx={{ py: 10 }}>
-                <Typography color="text.secondary">暂无数据记录</Typography>
-              </TableCell>
+              {columns.map((column) => (
+                <TableCell key={column} sx={{ whiteSpace: "nowrap" }}>{column}</TableCell>
+              ))}
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHead>
+          <TableBody>
+            {rows.length ? (
+              rows.map((row) => <TableRow key={row.id} hover>{render(row)}</TableRow>)
+            ) : (
+              <TableRow>
+                <TableCell colSpan={columns.length} align="center" sx={{ py: 10 }}>
+                  <Typography color="text.secondary">暂无数据记录</Typography>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Box>
     </TableContainer>
   );
 }

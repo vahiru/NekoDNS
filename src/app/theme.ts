@@ -110,6 +110,7 @@ export function createNekoTheme() {
         styleOverrides: {
           root: {
             borderBottom: `1px solid ${alpha("#C8CBBF", 0.5)}`,
+            padding: "12px 16px",
           },
           head: {
             fontWeight: 700,
