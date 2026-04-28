@@ -45,6 +45,8 @@ export function createNekoTheme() {
       h5: { fontWeight: 700, letterSpacing: -0.25 },
       h6: { fontWeight: 600, letterSpacing: 0 },
       button: { textTransform: "none", fontWeight: 600, letterSpacing: 0.1 },
+      body1: { fontSize: "1rem" },
+      body2: { fontSize: "0.9375rem" },
     },
     components: {
       MuiButton: {
@@ -88,6 +90,7 @@ export function createNekoTheme() {
           root: {
             borderRadius: "12px 12px 4px 4px",
             backgroundColor: surfaceContainerHigh,
+            fontSize: "16px",
             "&:hover": {
               backgroundColor: alpha(surfaceContainerHigh, 0.8),
             },
@@ -95,6 +98,17 @@ export function createNekoTheme() {
               backgroundColor: surfaceContainerHigh,
             },
             "&:before": { borderBottomColor: "#C8CBBF" },
+          },
+          input: {
+            fontSize: "16px",
+          },
+        },
+      },
+      MuiCssBaseline: {
+        styleOverrides: {
+          html: {
+            WebkitTextSizeAdjust: "100%",
+            textSizeAdjust: "100%",
           },
         },
       },
