@@ -48,13 +48,35 @@ async function handleVote(c: Context<AppBindings>, query: TelegramCallbackQuery)
   )
     .bind(telegramUserId)
     .first<AppUser>();
-  if (!admin) return;
+  if (!admin) {
+    await answerCallbackQuery(c, query.id, "未找到已绑定的管理员账号。");
+    return;
+  }
 
   const [, vote, applicationId] = query.data.split(":");
-  if (vote !== "approve" && vote !== "deny") return;
+  if (vote !== "approve" && vote !== "deny") {
+    await answerCallbackQuery(c, query.id, "无效的审批操作。");
+    return;
+  }
   c.set("user", admin);
-  await castVote(c, applicationId, vote, "telegram", telegramUserId);
-  await audit(c, "telegram.application.vote", "application", applicationId, { vote });
+  try {
+    await castVote(c, applicationId, vote, "telegram", telegramUserId);
+    await audit(c, "telegram.application.vote", "application", applicationId, { vote });
+    await answerCallbackQuery(c, query.id, vote === "approve" ? "已批准申请。" : "已记录拒绝票。");
+  } catch (error) {
+    await answerCallbackQuery(c, query.id, error instanceof Error ? error.message : "审批失败。");
+  }
+}
+
+async function answerCallbackQuery(c: Context<AppBindings>, callbackQueryId: string, text: string) {
+  if (!c.env.TELEGRAM_BOT_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+  }).catch((error) => {
+    console.error("Failed to answer Telegram callback query", { error });
+  });
 }
 
 interface TelegramUpdate {
@@ -68,6 +90,7 @@ interface TelegramMessage {
 }
 
 interface TelegramCallbackQuery {
+  id: string;
   data: string;
   from: { id: number };
 }

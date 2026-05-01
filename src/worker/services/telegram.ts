@@ -18,6 +18,7 @@ export async function sendApplicationTelegram(env: Env, applicationId: string) {
     `域名：\`${app.subdomain}\``,
     `类型：${app.record_type}`,
     `值：\`${app.record_value}\``,
+    `代理：${app.proxied ? "开启" : "直连"}`,
     `用途：${app.purpose || "无"}`,
   ].join("\n");
 

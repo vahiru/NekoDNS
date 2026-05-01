@@ -100,6 +100,7 @@ export const client = {
   deleteRecord: (id: string) => api<{ message: string }>(`/dns/records/${id}`, { method: "DELETE" }),
   adminUsers: () => api<any[]>("/admin/users"),
   adminRecords: () => api<any[]>("/admin/dns-records"),
+  notifyRecordOwner: (id: string, body: unknown) => api<{ message: string }>(`/admin/dns-records/${id}/notify-owner`, { method: "POST", body: JSON.stringify(body) }),
   adminApplications: () => api<any[]>("/admin/applications"),
   adminAbuseReports: () => api<any[]>("/admin/abuse-reports"),
   adminAuditLogs: () => api<any[]>("/admin/audit-logs"),

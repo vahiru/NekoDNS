@@ -12,10 +12,30 @@ import telegram from "./routes/telegram";
 import { processExpiredApplications } from "./services/approval";
 
 const app = new Hono<AppBindings>();
+const securityHeaders = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "script-src 'self' https://challenges.cloudflare.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self' https://challenges.cloudflare.com",
+    "frame-src https://challenges.cloudflare.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests",
+  ].join("; "),
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "same-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+};
 
 app.use("*", async (c, next) => {
   c.set("requestId", randomId("req"));
   await next();
+  for (const [name, value] of Object.entries(securityHeaders)) c.res.headers.set(name, value);
 });
 
 app.onError((error, c) => {
@@ -26,12 +46,25 @@ app.onError((error, c) => {
 });
 
 app.route("/api", auth);
-app.route("/api", dns);
-app.route("/api", admin);
 app.route("/api", abuse);
 app.route("/api", telegram);
+app.route("/api", dns);
+app.route("/api", admin);
 
-app.get("*", (c) => c.env.ASSETS.fetch(c.req.raw));
+app.get("*", async (c) => {
+  const response = await c.env.ASSETS.fetch(c.req.raw);
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/html")) return response;
+
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(securityHeaders)) headers.set(name, value);
+  headers.set("Cache-Control", "no-store, max-age=0");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+});
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {

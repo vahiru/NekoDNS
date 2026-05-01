@@ -6,6 +6,7 @@ import { randomToken, sha256Hex } from "../crypto";
 import { jsonError, requireAdmin, requireUser } from "../http";
 import { enqueueJob } from "../jobs";
 import { castVote, decideApplication, getVoteTally } from "../services/approval";
+import { adminRecordNoticeEmail } from "../services/email";
 
 const admin = new Hono<AppBindings>();
 admin.use("*", requireUser, requireAdmin);
@@ -29,11 +30,40 @@ admin.patch("/admin/users/:id/role", async (c) => {
 
 admin.get("/admin/dns-records", async (c) => {
   const records = await c.env.DB.prepare(
-    `SELECT r.*, u.username
+    `SELECT r.*, u.username, u.email
      FROM dns_records r JOIN users u ON u.id = r.user_id
      ORDER BY r.created_at DESC`,
   ).all();
   return c.json(records.results);
+});
+
+admin.post("/admin/dns-records/:id/notify-owner", async (c) => {
+  const body = z
+    .object({
+      subject: z.string().trim().min(1).max(160),
+      message: z.string().trim().min(1).max(4000),
+    })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return jsonError(c, 400, "邮件内容无效。", body.error.flatten());
+
+  const record = await c.env.DB.prepare(
+    `SELECT r.id, r.type, r.name, r.content, u.email
+     FROM dns_records r JOIN users u ON u.id = r.user_id
+     WHERE r.id = ?`,
+  )
+    .bind(c.req.param("id"))
+    .first<{ id: string; type: string; name: string; content: string; email: string }>();
+  if (!record) return jsonError(c, 404, "DNS 记录不存在。");
+
+  await enqueueJob(c, "email", {
+    to: record.email,
+    subject: body.data.subject,
+    html: adminRecordNoticeEmail(record, body.data.message),
+  });
+  await audit(c, "admin.dns_record.notify_owner", "dns_record", record.id, {
+    subject: body.data.subject,
+  });
+  return c.json({ message: "邮件通知已加入发送队列。" }, 202);
 });
 
 admin.get("/admin/applications", async (c) => {

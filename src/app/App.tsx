@@ -8,11 +8,13 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   MenuItem,
   Paper,
   Snackbar,
   Stack,
+  Switch,
   Tab,
   Table,
   TableBody,
@@ -24,12 +26,18 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { Add, CheckCircle, Delete, Edit, HowToVote, Refresh, Send } from "@mui/icons-material";
+import { Add, CheckCircle, Delete, Edit, Email, HowToVote, Refresh, Send } from "@mui/icons-material";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PublicUser } from "../shared/types";
 import { ApiError, client, type ApiConfig } from "./api";
 import { Shell, type ViewKey } from "./components/Shell";
 import { TurnstileBox } from "./components/TurnstileBox";
+
+const proxyableRecordTypes = new Set(["A", "AAAA", "CNAME"]);
+
+function canProxyRecord(type?: string) {
+  return proxyableRecordTypes.has(type || "A");
+}
 
 export default function App() {
   const isVerifyEmailRoute = location.pathname.includes("verify-email");
@@ -490,13 +498,15 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
   const [records, setRecords] = useState<any[]>([]);
   const [form, setForm] = useState<Record<string, any>>({ type: "A", ttl: 3600, proxied: false });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => client.records().then(setRecords).catch((error) => toast(error.message, "error")), [toast]);
   useEffect(() => void refresh(), [refresh]);
 
   const submit = async () => {
     try {
-      const body = { type: form.type, name: form.name, content: form.content, purpose: form.purpose, ttl: Number(form.ttl || 3600), proxied: Boolean(form.proxied) };
+      const body = { type: form.type, name: form.name, content: form.content, purpose: form.purpose, ttl: Number(form.ttl || 3600), proxied: canProxyRecord(form.type) && Boolean(form.proxied) };
       const result = editingId ? await client.updateRecord(editingId, body) : await client.submitApplication(body);
       toast(result.message);
       setForm({ type: "A", ttl: 3600, proxied: false });
@@ -507,14 +517,42 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
     }
   };
 
+  const editRecord = (record: any) => {
+    setEditingId(record.id);
+    setForm({ type: record.type, name: stripParent(record.name, config?.parentDomain), content: record.content, ttl: record.ttl, proxied: Boolean(record.proxied) });
+    toast("已载入记录，请在上方表单修改后保存。");
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      const result = await client.deleteRecord(deleteTarget.id);
+      toast(result.message);
+      setDeleteTarget(null);
+      await refresh();
+      setTimeout(refresh, 1500);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "删除任务提交失败。", "error");
+    }
+  };
+
   return (
     <Stack spacing={4}>
       <Header title="我的 DNS 记录" subtitle="管理您已审核通过并生效的解析记录" action={<Button variant="outlined" startIcon={<Refresh />} onClick={refresh}>刷新列表</Button>} />
       
-      <Paper sx={{ p: 4 }}>
+      <Paper ref={formRef} sx={{ p: 4 }}>
         <Typography variant="h6" sx={{ mb: 3, fontWeight: 700 }}>{editingId ? "修改现有记录" : "新增解析申请"}</Typography>
-        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "120px 1fr 1fr 120px 160px" }, gap: 3, alignItems: "start" }}>
-          <TextField select label="记录类型" value={form.type || "A"} onChange={(event) => setForm({ ...form, type: event.target.value })}>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "120px 1fr", md: "120px 1fr 1fr 120px 170px 160px" }, gap: 3, alignItems: "start" }}>
+          <TextField
+            select
+            label="记录类型"
+            value={form.type || "A"}
+            onChange={(event) => {
+              const type = event.target.value;
+              setForm({ ...form, type, proxied: canProxyRecord(type) ? form.proxied : false });
+            }}
+          >
             {["A", "AAAA", "CNAME", "TXT"].map((type) => (
               <MenuItem key={type} value={type}>{type}</MenuItem>
             ))}
@@ -522,12 +560,33 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
           <TextField label={`主机记录 (.${config?.parentDomain ?? ""})`} placeholder="www" value={form.name || ""} onChange={(event) => setForm({ ...form, name: event.target.value })} />
           <TextField label="记录内容" placeholder="IP 地址或域名目标" value={form.content || ""} onChange={(event) => setForm({ ...form, content: event.target.value })} />
           <TextField label="TTL" type="number" value={form.ttl || 3600} onChange={(event) => setForm({ ...form, ttl: event.target.value })} />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={canProxyRecord(form.type) && Boolean(form.proxied)}
+                disabled={!canProxyRecord(form.type)}
+                onChange={(event) => setForm({ ...form, proxied: event.target.checked })}
+              />
+            }
+            label="Cloudflare 代理"
+            sx={{ height: 56, m: 0, alignItems: "center" }}
+          />
           <Button fullWidth startIcon={<Add />} size="large" onClick={submit} sx={{ height: 56 }}>
             {editingId ? "保存修改" : "提交申请"}
           </Button>
           <Box sx={{ gridColumn: "1 / -1" }}>
             <TextField fullWidth label="申请用途说明" placeholder="请简述该域名的使用场景，有助于加速审核过程" value={form.purpose || ""} onChange={(event) => setForm({ ...form, purpose: event.target.value })} />
           </Box>
+          {editingId && (
+            <Box sx={{ gridColumn: "1 / -1" }}>
+              <Button variant="text" color="inherit" onClick={() => {
+                setEditingId(null);
+                setForm({ type: "A", ttl: 3600, proxied: false });
+              }}>
+                取消修改
+              </Button>
+            </Box>
+          )}
         </Box>
       </Paper>
 
@@ -546,13 +605,10 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
             </TableCell>
             <TableCell>
               <Stack direction="row" spacing={1}>
-                <IconButton color="primary" size="small" onClick={() => {
-                  setEditingId(record.id);
-                  setForm({ type: record.type, name: stripParent(record.name, config?.parentDomain), content: record.content, ttl: record.ttl, proxied: Boolean(record.proxied) });
-                }}>
+                <IconButton color="primary" size="small" aria-label={`修改 ${record.name}`} onClick={() => editRecord(record)}>
                   <Edit />
                 </IconButton>
-                <IconButton color="error" size="small" onClick={() => client.deleteRecord(record.id).then((result) => toast(result.message)).then(refresh)}>
+                <IconButton color="error" size="small" aria-label={`删除 ${record.name}`} onClick={() => setDeleteTarget(record)}>
                   <Delete />
                 </IconButton>
               </Stack>
@@ -560,6 +616,18 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
           </>
         )}
       />
+      <Dialog open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>确认删除 DNS 记录</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ wordBreak: "break-all" }}>
+            {deleteTarget?.name}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => setDeleteTarget(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={confirmDelete}>删除</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
@@ -644,7 +712,7 @@ function AdminPanel({ toast }: { toast: (text: string, severity?: "success" | "e
       </Paper>
       {tab === 0 && <AdminApplications rows={data.apps} refresh={refresh} toast={toast} />}
       {tab === 1 && <UsersTable rows={data.users} refresh={refresh} toast={toast} />}
-      {tab === 2 && <RecordsTable rows={data.records} />}
+      {tab === 2 && <RecordsTable rows={data.records} toast={toast} />}
       {tab === 3 && <AdminReports rows={data.reports} refresh={refresh} toast={toast} />}
       {tab === 4 && <AuditTable rows={data.logs} />}
     </Stack>
@@ -663,7 +731,7 @@ function AdminApplications({ rows, refresh, toast }: { rows: any[]; refresh: () 
   };
   return (
     <DataTable
-      columns={["申请人", "类型", "域名目标", "解析值", "当前状态", "投票截止", "操作决策"]}
+      columns={["申请人", "类型", "域名目标", "解析值", "代理", "当前状态", "投票截止", "操作决策"]}
       rows={rows}
       render={(app) => (
         <>
@@ -671,6 +739,7 @@ function AdminApplications({ rows, refresh, toast }: { rows: any[]; refresh: () 
           <TableCell>{app.request_type}</TableCell>
           <TableCell>{app.subdomain}</TableCell>
           <TableCell sx={{ maxWidth: 300, wordBreak: "break-all", fontFamily: "monospace" }}>{app.record_value}</TableCell>
+          <TableCell>{app.proxied ? <Chip size="small" label="开启" color="primary" variant="outlined" /> : "直连"}</TableCell>
           <TableCell>
             <StatusChip value={app.status} />
           </TableCell>
@@ -765,13 +834,14 @@ function AdminReports({ rows, refresh, toast }: { rows: any[]; refresh: () => vo
 function ApplicationTable({ rows }: { rows: any[] }) {
   return (
     <DataTable
-      columns={["请求类型", "目标域名", "解析记录值", "申请用途", "当前状态", "提交日期"]}
+      columns={["请求类型", "目标域名", "解析记录值", "代理", "申请用途", "当前状态", "提交日期"]}
       rows={rows}
       render={(app) => (
         <>
           <TableCell sx={{ fontWeight: 700 }}>{app.request_type}</TableCell>
           <TableCell>{app.subdomain}</TableCell>
           <TableCell sx={{ maxWidth: 300, wordBreak: "break-all", fontFamily: "monospace" }}>{app.record_value}</TableCell>
+          <TableCell>{app.proxied ? <Chip size="small" label="开启" color="primary" variant="outlined" /> : "直连"}</TableCell>
           <TableCell sx={{ color: "text.secondary", fontSize: "0.875rem" }}>{app.purpose || "未注明"}</TableCell>
           <TableCell>
             <StatusChip value={app.status} />
@@ -783,25 +853,96 @@ function ApplicationTable({ rows }: { rows: any[] }) {
   );
 }
 
-function RecordsTable({ rows }: { rows: any[] }) {
+function RecordsTable({ rows, toast }: { rows: any[]; toast: (text: string, severity?: "success" | "error") => void }) {
+  const [noticeTarget, setNoticeTarget] = useState<any | null>(null);
+  const [noticeForm, setNoticeForm] = useState({ subject: "", message: "" });
+
+  const openNotice = (record: any) => {
+    setNoticeTarget(record);
+    setNoticeForm(defaultRecordNotice(record));
+  };
+
+  const sendNotice = async () => {
+    if (!noticeTarget) return;
+    try {
+      const result = await client.notifyRecordOwner(noticeTarget.id, noticeForm);
+      toast(result.message);
+      setNoticeTarget(null);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "邮件通知发送失败。", "error");
+    }
+  };
+
   return (
-    <DataTable
-      columns={["所有者", "类型", "域名", "解析值", "解析状态", "创建于"]}
-      rows={rows}
-      render={(record) => (
-        <>
-          <TableCell sx={{ fontWeight: 600 }}>{record.username}</TableCell>
-          <TableCell sx={{ fontWeight: 700 }}>{record.type}</TableCell>
-          <TableCell>{record.name}</TableCell>
-          <TableCell sx={{ maxWidth: 300, wordBreak: "break-all", fontFamily: "monospace" }}>{record.content}</TableCell>
-          <TableCell>
-            <StatusChip value={record.status} />
-          </TableCell>
-          <TableCell sx={{ fontSize: "0.75rem" }}>{formatDate(record.created_at)}</TableCell>
-        </>
-      )}
-    />
+    <>
+      <DataTable
+        columns={["所有者", "类型", "域名", "解析值", "代理", "解析状态", "创建于", "操作"]}
+        rows={rows}
+        render={(record) => (
+          <>
+            <TableCell sx={{ fontWeight: 600 }}>{record.username}</TableCell>
+            <TableCell sx={{ fontWeight: 700 }}>{record.type}</TableCell>
+            <TableCell>{record.name}</TableCell>
+            <TableCell sx={{ maxWidth: 300, wordBreak: "break-all", fontFamily: "monospace" }}>{record.content}</TableCell>
+            <TableCell>{record.proxied ? <Chip size="small" label="开启" color="primary" variant="outlined" /> : "直连"}</TableCell>
+            <TableCell>
+              <StatusChip value={record.status} />
+            </TableCell>
+            <TableCell sx={{ fontSize: "0.75rem" }}>{formatDate(record.created_at)}</TableCell>
+            <TableCell>
+              <Button size="small" variant="outlined" startIcon={<Email />} onClick={() => openNotice(record)}>
+                邮件
+              </Button>
+            </TableCell>
+          </>
+        )}
+      />
+      <Dialog open={Boolean(noticeTarget)} onClose={() => setNoticeTarget(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>发送用户邮件</DialogTitle>
+        <DialogContent>
+          <Stack spacing={3} sx={{ pt: 1 }}>
+            <Alert severity="info" sx={{ borderRadius: 2 }}>
+              收件人：{noticeTarget?.username}（{noticeTarget?.email}）
+            </Alert>
+            <TextField
+              label="邮件主题"
+              value={noticeForm.subject}
+              onChange={(event) => setNoticeForm((current) => ({ ...current, subject: event.target.value }))}
+            />
+            <TextField
+              label="邮件正文"
+              value={noticeForm.message}
+              onChange={(event) => setNoticeForm((current) => ({ ...current, message: event.target.value }))}
+              multiline
+              minRows={8}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => setNoticeTarget(null)}>取消</Button>
+          <Button variant="contained" startIcon={<Send />} onClick={sendNotice}>发送</Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
+}
+
+function defaultRecordNotice(record: any) {
+  const isCname = record.type === "CNAME";
+  return {
+    subject: isCname ? `请检查您的 CNAME 目标：${record.name}` : `请检查您的 DNS 记录：${record.name}`,
+    message: isCname
+      ? [
+          `我们在例行检查中发现，您的域名 ${record.name} 当前指向的 CNAME 目标可能返回 404 或无法正常打开。`,
+          `当前解析目标：${record.content}`,
+          "请确认目标站点是否已正确绑定该域名，或登录 NekoDNS 控制面板更新解析记录。",
+        ].join("\n\n")
+      : [
+          `我们需要提醒您检查 DNS 记录 ${record.name} 的当前配置。`,
+          `当前记录：${record.type} ${record.content}`,
+          "请登录 NekoDNS 控制面板确认该记录仍符合您的使用需求。",
+        ].join("\n\n"),
+  };
 }
 
 function AuditTable({ rows }: { rows: any[] }) {

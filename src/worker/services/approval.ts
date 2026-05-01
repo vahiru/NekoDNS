@@ -22,7 +22,7 @@ export async function castVote(c: Context<AppBindings>, applicationId: string, v
     .run();
 
   const tally = await getVoteTally(c.env, applicationId);
-  if (tally.approve >= 2) await decideApplication(c.env, applicationId, "approved", `2 票批准`);
+  if (tally.approve >= 1) await decideApplication(c.env, applicationId, "approved", `管理员 ${user.username} 批准`);
   if (tally.deny >= 2) await decideApplication(c.env, applicationId, "rejected", `2 票拒绝`);
   return tally;
 }

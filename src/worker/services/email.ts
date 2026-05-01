@@ -275,6 +275,40 @@ export function applicationResultEmail(domain: string, status: string, reason?: 
   `);
 }
 
+export function adminRecordNoticeEmail(record: { name: string; type: string; content: string }, message: string) {
+  return wrapLayout(`
+    <h1>NekoDNS 记录状态通知</h1>
+    <p>您好，管理员针对您的 DNS 记录发送了一条通知：</p>
+    <p><strong>域名：</strong>${escapeHtml(record.name)}</p>
+    <p><strong>类型：</strong>${escapeHtml(record.type)}</p>
+    <p><strong>解析值：</strong><code>${escapeHtml(record.content)}</code></p>
+    <div style="margin-top: 24px; padding: 16px; border-left: 4px solid #386A20; background: #F6FBF1;">
+      ${textToHtml(message)}
+    </div>
+    <p>请登录 NekoDNS 控制面板检查并按需修改您的解析配置。</p>
+  `);
+}
+
 function encodeHeader(value: string) {
   return `=?UTF-8?B?${btoa(unescape(encodeURIComponent(value)))}?=`;
+}
+
+function textToHtml(value: string) {
+  return escapeHtml(value)
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[char];
+  });
 }
