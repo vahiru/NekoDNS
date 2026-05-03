@@ -1,7 +1,8 @@
 import { z } from "zod";
-import type { DnsRecordType } from "./types";
+import { dnsRecordTypes } from "./dns-content";
 
-export const dnsRecordTypes = ["A", "AAAA", "CNAME", "TXT"] as const;
+export { dnsRecordTypes, validateRecordContent } from "./dns-content";
+
 const reservedLabels = new Set([
   "admin",
   "api",
@@ -64,27 +65,6 @@ export function normalizeRecordName(input: string, parentDomain: string): string
   }
 
   return `${name}.${parent}`;
-}
-
-export function validateRecordContent(type: DnsRecordType, content: string): void {
-  if (type === "A" && !/^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(content)) {
-    throw new Error("A 记录必须是有效 IPv4 地址。");
-  }
-
-  if (type === "AAAA" && !/^[0-9a-f:]+$/i.test(content)) {
-    throw new Error("AAAA 记录必须是有效 IPv6 地址。");
-  }
-
-  if (type === "CNAME") {
-    const value = content.toLowerCase().replace(/\.$/, "");
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(value)) {
-      throw new Error("CNAME 记录必须指向有效域名。");
-    }
-  }
-
-  if (type === "TXT" && content.length > 4096) {
-    throw new Error("TXT 内容过长。");
-  }
 }
 
 export function isCoreRecordChange(current: { type: string; name: string; content: string }, next: { type: string; name: string; content: string }) {

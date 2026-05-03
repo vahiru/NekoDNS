@@ -28,15 +28,38 @@ import {
 } from "@mui/material";
 import { Add, CheckCircle, Delete, Edit, Email, HowToVote, Refresh, Send } from "@mui/icons-material";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { PublicUser } from "../shared/types";
+import { dnsRecordTypes, validateRecordContent } from "../shared/dns-content";
+import type { DnsRecordType, PublicUser } from "../shared/types";
 import { ApiError, client, type ApiConfig } from "./api";
 import { Shell, type ViewKey } from "./components/Shell";
 import { TurnstileBox } from "./components/TurnstileBox";
 
 const proxyableRecordTypes = new Set(["A", "AAAA", "CNAME"]);
+const recordContentHints: Record<DnsRecordType, { placeholder: string; helper: string }> = {
+  A: { placeholder: "192.0.2.10", helper: "A 记录只能填写 IPv4 地址。" },
+  AAAA: { placeholder: "2001:db8::10", helper: "AAAA 记录只能填写 IPv6 地址。" },
+  CNAME: { placeholder: "target.example.com", helper: "CNAME 记录只能填写目标域名，不能填写 IP。" },
+  TXT: { placeholder: "v=spf1 include:example.com ~all", helper: "TXT 记录可填写验证字符串或文本内容。" },
+};
 
 function canProxyRecord(type?: string) {
   return proxyableRecordTypes.has(type || "A");
+}
+
+function asDnsRecordType(type?: string): DnsRecordType {
+  return dnsRecordTypes.includes(type as DnsRecordType) ? (type as DnsRecordType) : "A";
+}
+
+function recordContentError(type: DnsRecordType, content: unknown) {
+  const value = String(content ?? "");
+  if (!value.trim()) return undefined;
+
+  try {
+    validateRecordContent(type, value);
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : "记录内容格式无效。";
+  }
 }
 
 export default function App() {
@@ -500,13 +523,17 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
+  const recordType = asDnsRecordType(form.type);
+  const contentValidationError = recordContentError(recordType, form.content);
+  const contentHint = recordContentHints[recordType];
 
   const refresh = useCallback(() => client.records().then(setRecords).catch((error) => toast(error.message, "error")), [toast]);
   useEffect(() => void refresh(), [refresh]);
 
   const submit = async () => {
     try {
-      const body = { type: form.type, name: form.name, content: form.content, purpose: form.purpose, ttl: Number(form.ttl || 3600), proxied: canProxyRecord(form.type) && Boolean(form.proxied) };
+      validateRecordContent(recordType, String(form.content ?? ""));
+      const body = { type: recordType, name: form.name, content: form.content, purpose: form.purpose, ttl: Number(form.ttl || 3600), proxied: canProxyRecord(recordType) && Boolean(form.proxied) };
       const result = editingId ? await client.updateRecord(editingId, body) : await client.submitApplication(body);
       toast(result.message);
       setForm({ type: "A", ttl: 3600, proxied: false });
@@ -553,12 +580,19 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
               setForm({ ...form, type, proxied: canProxyRecord(type) ? form.proxied : false });
             }}
           >
-            {["A", "AAAA", "CNAME", "TXT"].map((type) => (
+            {dnsRecordTypes.map((type) => (
               <MenuItem key={type} value={type}>{type}</MenuItem>
             ))}
           </TextField>
           <TextField label={`主机记录 (.${config?.parentDomain ?? ""})`} placeholder="www" value={form.name || ""} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-          <TextField label="记录内容" placeholder="IP 地址或域名目标" value={form.content || ""} onChange={(event) => setForm({ ...form, content: event.target.value })} />
+          <TextField
+            label="记录内容"
+            placeholder={contentHint.placeholder}
+            value={form.content || ""}
+            error={Boolean(contentValidationError)}
+            helperText={contentValidationError || contentHint.helper}
+            onChange={(event) => setForm({ ...form, content: event.target.value })}
+          />
           <TextField label="TTL" type="number" value={form.ttl || 3600} onChange={(event) => setForm({ ...form, ttl: event.target.value })} />
           <FormControlLabel
             control={
@@ -571,7 +605,7 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
             label="Cloudflare 代理"
             sx={{ height: 56, m: 0, alignItems: "center" }}
           />
-          <Button fullWidth startIcon={<Add />} size="large" onClick={submit} sx={{ height: 56 }}>
+          <Button fullWidth startIcon={<Add />} size="large" onClick={submit} disabled={Boolean(contentValidationError)} sx={{ height: 56 }}>
             {editingId ? "保存修改" : "提交申请"}
           </Button>
           <Box sx={{ gridColumn: "1 / -1" }}>

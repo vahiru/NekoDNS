@@ -15,7 +15,10 @@ describe("DNS policy", () => {
 
   it("validates supported record content", () => {
     expect(() => validateRecordContent("A", "192.0.2.10")).not.toThrow();
+    expect(() => validateRecordContent("AAAA", "2001:db8::10")).not.toThrow();
     expect(() => validateRecordContent("CNAME", "target.example.com")).not.toThrow();
     expect(() => validateRecordContent("A", "999.1.1.1")).toThrow();
+    expect(() => validateRecordContent("AAAA", "2001:db8:::10")).toThrow();
+    expect(() => validateRecordContent("CNAME", "192.0.2.10")).toThrow();
   });
 });
