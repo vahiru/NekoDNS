@@ -32,10 +32,21 @@ const securityHeaders = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
 };
 
+function withSecurityHeaders(response: Response, extraHeaders?: Record<string, string>) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(securityHeaders)) headers.set(name, value);
+  for (const [name, value] of Object.entries(extraHeaders ?? {})) headers.set(name, value);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 app.use("*", async (c, next) => {
   c.set("requestId", randomId("req"));
   await next();
-  for (const [name, value] of Object.entries(securityHeaders)) c.res.headers.set(name, value);
+  c.res = withSecurityHeaders(c.res);
 });
 
 app.onError((error, c) => {
@@ -56,14 +67,7 @@ app.get("*", async (c) => {
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("text/html")) return response;
 
-  const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(securityHeaders)) headers.set(name, value);
-  headers.set("Cache-Control", "no-store, max-age=0");
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+  return withSecurityHeaders(response, { "Cache-Control": "no-store, max-age=0" });
 });
 
 export default {
