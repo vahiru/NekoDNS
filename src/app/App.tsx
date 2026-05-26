@@ -10,6 +10,7 @@ import {
   DialogTitle,
   FormControlLabel,
   IconButton,
+  Link,
   MenuItem,
   Paper,
   Snackbar,
@@ -643,8 +644,16 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
               提交前请确认 GitHub Pages 已绑定完整域名，否则解析生效后也可能显示 404 或证书异常。
             </Alert>
             <Typography color="text.secondary">
-              请在 GitHub 仓库的 Pages 设置中填写同一个自定义域名，并确保仓库内的 CNAME 文件内容与申请域名一致。GitHub 生成 HTTPS 证书可能需要一些时间；如果开启 Cloudflare 代理后访问异常，请先切回直连排查。
+              请在 GitHub 仓库的 Pages 设置中填写同一个自定义域名，并确保仓库内的 CNAME 文件内容与申请域名一致。GitHub 生成 HTTPS 证书可能需要一些时间；如果开启 Cloudflare 代理后访问异常，请先切回直连排查
             </Typography>
+            <Link
+              href="https://githubdocs.cn/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages"
+              target="_blank"
+              rel="noreferrer"
+              sx={{ wordBreak: "break-all" }}
+            >
+              https://githubdocs.cn/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages
+            </Link>
           </Stack>
         </DialogContent>
         <DialogActions>
