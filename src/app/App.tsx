@@ -643,14 +643,22 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
             <Alert severity="warning" sx={{ borderRadius: 2 }}>
               提交前请确认已在设置中对应绑定custom域名，并确保仓库内的 CNAME 文件内容与申请域名一致。GitHub 生成 HTTPS 证书可能需要一些时间；请耐心等待。此外，开启cloudflare代理可能会导致不可预料的错误。建议保持关闭
             </Alert>
-            <Link
-              href="https://githubdocs.cn/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages"
-              target="_blank"
-              rel="noreferrer"
-              sx={{ wordBreak: "break-all" }}
-            >
-              https://githubdocs.cn/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages
-            </Link>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Link
+                href="https://githubdocs.cn/en/pages/configuring-a-custom-domain-for-your-github-pages-site/troubleshooting-custom-domains-and-github-pages"
+                target="_blank"
+                rel="noreferrer"
+              >
+                常见问题排查指南
+              </Link>
+              <Link
+                href="https://githubdocs.cn/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site"
+                target="_blank"
+                rel="noreferrer"
+              >
+                如何配置自定义域名
+              </Link>
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions>
