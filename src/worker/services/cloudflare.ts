@@ -16,6 +16,11 @@ interface ApplicationRow {
   email: string;
 }
 
+interface DnsRecordRow {
+  id: string;
+  cloudflare_record_id: string | null;
+}
+
 export async function applyDnsApplication(env: Env, applicationId: string) {
   const app = await env.DB.prepare(
     `SELECT a.*, u.email
@@ -48,9 +53,9 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
         .bind(response.result.id, app.user_id, app.record_type, app.subdomain, app.record_value, app.ttl, app.proxied, response.result.id)
         .run();
     } else if (app.target_dns_record_id) {
-      const record = await env.DB.prepare("SELECT * FROM dns_records WHERE id = ?").bind(app.target_dns_record_id).first<{ cloudflare_record_id: string }>();
+      const record = await env.DB.prepare("SELECT id, cloudflare_record_id FROM dns_records WHERE id = ?").bind(app.target_dns_record_id).first<DnsRecordRow>();
       if (!record) throw new Error("Target DNS record not found.");
-      const response = await cloudflareFetch(env, `dns_records/${record.cloudflare_record_id}`, "PUT", payload);
+      const response = await cloudflareFetch(env, `dns_records/${cloudflareRecordId(record)}`, "PUT", payload);
       await env.DB.prepare(
         `UPDATE dns_records
          SET type = ?, name = ?, content = ?, ttl = ?, proxied = ?, cloudflare_record_id = ?, updated_at = datetime('now')
@@ -83,10 +88,14 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
 }
 
 export async function deleteCloudflareRecord(env: Env, recordId: string) {
-  const record = await env.DB.prepare("SELECT * FROM dns_records WHERE id = ?").bind(recordId).first<{ cloudflare_record_id: string }>();
+  const record = await env.DB.prepare("SELECT id, cloudflare_record_id FROM dns_records WHERE id = ?").bind(recordId).first<DnsRecordRow>();
   if (!record) return;
-  await cloudflareFetch(env, `dns_records/${record.cloudflare_record_id}`, "DELETE");
+  await cloudflareFetch(env, `dns_records/${cloudflareRecordId(record)}`, "DELETE");
   await env.DB.prepare("UPDATE dns_records SET status = 'deleted', updated_at = datetime('now') WHERE id = ?").bind(recordId).run();
+}
+
+function cloudflareRecordId(record: DnsRecordRow) {
+  return record.cloudflare_record_id || record.id;
 }
 
 async function cloudflareFetch(env: Env, path: string, method: string, body?: unknown): Promise<{ success: boolean; result: { id: string } }> {
