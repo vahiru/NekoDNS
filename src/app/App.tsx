@@ -62,6 +62,11 @@ function recordContentError(type: DnsRecordType, content: unknown) {
   }
 }
 
+function isGithubPagesCname(type: DnsRecordType, content: unknown) {
+  const target = String(content ?? "").trim().toLowerCase().replace(/\.$/, "");
+  return type === "CNAME" && target.endsWith(".github.io") && target !== "github.io";
+}
+
 export default function App() {
   const isVerifyEmailRoute = location.pathname.includes("verify-email");
   const isResetPasswordRoute = location.pathname.includes("reset-password");
@@ -522,6 +527,7 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
   const [form, setForm] = useState<Record<string, any>>({ type: "A", ttl: 3600, proxied: false });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [githubPagesWarningOpen, setGithubPagesWarningOpen] = useState(false);
   const formRef = useRef<HTMLDivElement>(null);
   const recordType = asDnsRecordType(form.type);
   const contentValidationError = recordContentError(recordType, form.content);
@@ -530,14 +536,19 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
   const refresh = useCallback(() => client.records().then(setRecords).catch((error) => toast(error.message, "error")), [toast]);
   useEffect(() => void refresh(), [refresh]);
 
-  const submit = async () => {
+  const submit = async (skipGithubPagesWarning = false) => {
     try {
       validateRecordContent(recordType, String(form.content ?? ""));
+      if (!skipGithubPagesWarning && isGithubPagesCname(recordType, form.content)) {
+        setGithubPagesWarningOpen(true);
+        return;
+      }
       const body = { type: recordType, name: form.name, content: form.content, purpose: form.purpose, ttl: Number(form.ttl || 3600), proxied: canProxyRecord(recordType) && Boolean(form.proxied) };
       const result = editingId ? await client.updateRecord(editingId, body) : await client.submitApplication(body);
       toast(result.message);
       setForm({ type: "A", ttl: 3600, proxied: false });
       setEditingId(null);
+      setGithubPagesWarningOpen(false);
       refresh();
     } catch (error) {
       toast(error instanceof Error ? error.message : "操作未成功，请检查输入格式。", "error");
@@ -605,7 +616,7 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
             label="Cloudflare 代理"
             sx={{ height: 56, m: 0, alignItems: "center" }}
           />
-          <Button fullWidth startIcon={<Add />} size="large" onClick={submit} disabled={Boolean(contentValidationError)} sx={{ height: 56 }}>
+          <Button fullWidth startIcon={<Add />} size="large" onClick={() => submit()} disabled={Boolean(contentValidationError)} sx={{ height: 56 }}>
             {editingId ? "保存修改" : "提交申请"}
           </Button>
           <Box sx={{ gridColumn: "1 / -1" }}>
@@ -623,6 +634,24 @@ function Dashboard({ config, toast }: { config?: ApiConfig; toast: (text: string
           )}
         </Box>
       </Paper>
+
+      <Dialog open={githubPagesWarningOpen} onClose={() => setGithubPagesWarningOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>GitHub Pages 设置提醒</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="warning" sx={{ borderRadius: 2 }}>
+              提交前请确认 GitHub Pages 已绑定完整域名，否则解析生效后也可能显示 404 或证书异常。
+            </Alert>
+            <Typography color="text.secondary">
+              请在 GitHub 仓库的 Pages 设置中填写同一个自定义域名，并确保仓库内的 CNAME 文件内容与申请域名一致。GitHub 生成 HTTPS 证书可能需要一些时间；如果开启 Cloudflare 代理后访问异常，请先切回直连排查。
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => setGithubPagesWarningOpen(false)}>返回检查</Button>
+          <Button variant="contained" onClick={() => submit(true)}>{editingId ? "继续保存" : "继续提交"}</Button>
+        </DialogActions>
+      </Dialog>
 
       <DataTable
         columns={["类型", "完整域名", "解析内容", "TTL", "代理", "状态", "操作"]}
