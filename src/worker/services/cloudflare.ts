@@ -21,6 +21,10 @@ interface DnsRecordRow {
   cloudflare_record_id: string | null;
 }
 
+interface DeletedDnsRecordRow extends DnsRecordRow {
+  status: "deleted";
+}
+
 export async function applyDnsApplication(env: Env, applicationId: string) {
   const app = await env.DB.prepare(
     `SELECT a.*, u.email
@@ -45,13 +49,26 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
     };
 
     if (app.request_type === "create") {
+      const deletedRecord = await env.DB.prepare("SELECT id, cloudflare_record_id, status FROM dns_records WHERE name = ? AND status = 'deleted'")
+        .bind(app.subdomain)
+        .first<DeletedDnsRecordRow>();
       const response = await cloudflareFetch(env, "dns_records", "POST", payload);
-      await env.DB.prepare(
-        `INSERT INTO dns_records (id, user_id, type, name, content, ttl, proxied, cloudflare_record_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-        .bind(response.result.id, app.user_id, app.record_type, app.subdomain, app.record_value, app.ttl, app.proxied, response.result.id)
-        .run();
+      if (deletedRecord) {
+        await env.DB.prepare(
+          `UPDATE dns_records
+           SET user_id = ?, type = ?, content = ?, ttl = ?, proxied = ?, cloudflare_record_id = ?, status = 'active', updated_at = datetime('now')
+           WHERE id = ?`,
+        )
+          .bind(app.user_id, app.record_type, app.record_value, app.ttl, app.proxied, response.result.id, deletedRecord.id)
+          .run();
+      } else {
+        await env.DB.prepare(
+          `INSERT INTO dns_records (id, user_id, type, name, content, ttl, proxied, cloudflare_record_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(response.result.id, app.user_id, app.record_type, app.subdomain, app.record_value, app.ttl, app.proxied, response.result.id)
+          .run();
+      }
     } else if (app.target_dns_record_id) {
       const record = await env.DB.prepare("SELECT id, cloudflare_record_id FROM dns_records WHERE id = ?").bind(app.target_dns_record_id).first<DnsRecordRow>();
       if (!record) throw new Error("Target DNS record not found.");
