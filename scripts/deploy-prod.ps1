@@ -236,7 +236,6 @@ if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("QUE
 
 Write-Step "Checking required environment variables"
 $null = Ensure-Env "CLOUDFLARE_API_TOKEN"
-$sessionSecret = Ensure-Env "SESSION_SECRET"
 $turnstileSecret = Ensure-Env "TURNSTILE_SECRET_KEY"
 $cfZoneId = Ensure-Env "CF_ZONE_ID"
 $cfApiToken = Ensure-Env "CF_API_TOKEN"
@@ -278,7 +277,6 @@ Write-Step "Applying D1 migrations"
 Invoke-WranglerHost @("d1", "migrations", "apply", $DatabaseName, "--remote") "D1 migration failed."
 
 Write-Step "Uploading worker secrets"
-Put-Secret "SESSION_SECRET" $sessionSecret
 Put-Secret "TURNSTILE_SECRET_KEY" $turnstileSecret
 Put-Secret "CF_ZONE_ID" $cfZoneId
 Put-Secret "CF_API_TOKEN" $cfApiToken
