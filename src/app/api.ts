@@ -1,4 +1,24 @@
-import type { PublicUser } from "../shared/types";
+import type {
+  AbuseReportRow,
+  AdminApplicationRow,
+  AdminDnsRecordRow,
+  AdminUserRow,
+  ApplicationRow,
+  AuditLogRow,
+  DnsRecordRow,
+  PublicUser,
+} from "../shared/types";
+
+/** One page of an admin listing; `hasMore` says whether another request would return rows. */
+export interface Page<Row> {
+  items: Row[];
+  hasMore: boolean;
+  offset: number;
+}
+
+function pageQuery(offset: number, limit: number) {
+  return `?${new URLSearchParams({ offset: String(offset), limit: String(limit) }).toString()}`;
+}
 
 export interface ApiConfig {
   parentDomain: string;
@@ -93,17 +113,17 @@ export const client = {
   forgotPassword: (body: unknown) => api<{ message: string }>("/auth/forgot-password", { method: "POST", body: JSON.stringify(body) }),
   resetPassword: (body: unknown) => api<{ message: string }>("/auth/reset-password", { method: "POST", body: JSON.stringify(body) }),
   changePassword: (body: unknown) => api<{ message: string }>("/me/change-password", { method: "POST", body: JSON.stringify(body) }),
-  records: () => api<any[]>("/dns/records"),
-  applications: () => api<any[]>("/applications"),
+  records: () => api<DnsRecordRow[]>("/dns/records"),
+  applications: () => api<ApplicationRow[]>("/applications"),
   submitApplication: (body: unknown) => api<{ id: string; message: string }>("/dns/applications", { method: "POST", body: JSON.stringify(body) }),
   updateRecord: (id: string, body: unknown) => api<{ id: string; message: string }>(`/dns/records/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteRecord: (id: string) => api<{ message: string }>(`/dns/records/${id}`, { method: "DELETE" }),
-  adminUsers: () => api<any[]>("/admin/users"),
-  adminRecords: () => api<any[]>("/admin/dns-records"),
+  adminUsers: (offset = 0, limit = 50) => api<Page<AdminUserRow>>(`/admin/users${pageQuery(offset, limit)}`),
+  adminRecords: (offset = 0, limit = 50) => api<Page<AdminDnsRecordRow>>(`/admin/dns-records${pageQuery(offset, limit)}`),
   notifyRecordOwner: (id: string, body: unknown) => api<{ message: string }>(`/admin/dns-records/${id}/notify-owner`, { method: "POST", body: JSON.stringify(body) }),
-  adminApplications: () => api<any[]>("/admin/applications"),
-  adminAbuseReports: () => api<any[]>("/admin/abuse-reports"),
-  adminAuditLogs: () => api<any[]>("/admin/audit-logs"),
+  adminApplications: (offset = 0, limit = 50) => api<Page<AdminApplicationRow>>(`/admin/applications${pageQuery(offset, limit)}`),
+  adminAbuseReports: (offset = 0, limit = 50) => api<Page<AbuseReportRow>>(`/admin/abuse-reports${pageQuery(offset, limit)}`),
+  adminAuditLogs: (offset = 0, limit = 50) => api<Page<AuditLogRow>>(`/admin/audit-logs${pageQuery(offset, limit)}`),
   setRole: (id: string, role: "user" | "admin") => api<{ message: string }>(`/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   vote: (id: string, vote: "approve" | "deny") => api<{ message: string }>(`/admin/applications/${id}/vote`, { method: "POST", body: JSON.stringify({ vote }) }),
   decision: (id: string, status: "approved" | "rejected", reason: string) =>

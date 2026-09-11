@@ -1,4 +1,4 @@
-import { Box, useMediaQuery, useTheme } from "@mui/material";
+import { Alert, Box, useMediaQuery, useTheme } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
 
 declare global {
@@ -19,32 +19,33 @@ declare global {
   }
 }
 
+/** Cloudflare's documented always-passing test key; the worker short-circuits the same value. */
+function isTestSiteKey(siteKey?: string) {
+  return Boolean(siteKey?.startsWith("1x000"));
+}
+
 export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: string; onToken: (token: string) => void; resetKey?: number }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const widgetId = useRef<string | undefined>(undefined);
-  const [rendered, setRendered] = useState(false);
+  const renderedRef = useRef(false);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTestKey = isTestSiteKey(siteKey);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!siteKey || rendered || !ref.current) return;
-    if (siteKey.startsWith("1x000")) {
-      onToken("dev-token");
-      setRendered(true);
-      return;
-    }
+    if (!siteKey || isTestKey || renderedRef.current || !ref.current) return;
 
-    const load = () => {
-      if (window.turnstile && ref.current && !rendered) {
-        widgetId.current = window.turnstile.render(ref.current, {
-          sitekey: siteKey,
-          callback: onToken,
-          "expired-callback": () => onToken(""),
-          "error-callback": () => onToken(""),
-          size: isMobile ? "compact" : "normal",
-        });
-        setRendered(true);
-      }
+    const render = () => {
+      if (!window.turnstile || !ref.current || renderedRef.current) return;
+      renderedRef.current = true;
+      widgetId.current = window.turnstile.render(ref.current, {
+        sitekey: siteKey,
+        callback: onToken,
+        "expired-callback": () => onToken(""),
+        "error-callback": () => onToken(""),
+        size: isMobile ? "compact" : "normal",
+      });
     };
 
     if (!document.querySelector("script[data-turnstile]")) {
@@ -53,23 +54,35 @@ export function TurnstileBox({ siteKey, onToken, resetKey = 0 }: { siteKey?: str
       script.async = true;
       script.defer = true;
       script.dataset.turnstile = "true";
-      script.onload = load;
+      script.onload = render;
+      script.onerror = () => setFailed(true);
       document.head.appendChild(script);
     } else {
-      load();
+      render();
     }
-  }, [onToken, rendered, siteKey, isMobile]);
+  }, [onToken, siteKey, isMobile, isTestKey]);
 
   useEffect(() => {
     if (!siteKey) return;
-    if (siteKey.startsWith("1x000")) {
+    if (isTestKey) {
       onToken("dev-token");
       return;
     }
     if (!widgetId.current || !window.turnstile) return;
     onToken("");
     window.turnstile.reset(widgetId.current);
-  }, [onToken, resetKey, siteKey]);
+  }, [onToken, resetKey, siteKey, isTestKey]);
+
+  // No widget will ever mount with the test key, so do not hold space for one.
+  if (isTestKey) return null;
+
+  if (failed) {
+    return (
+      <Alert severity="warning" sx={{ width: "100%" }}>
+        人机验证组件加载失败，请检查网络后刷新页面重试。
+      </Alert>
+    );
+  }
 
   return <Box ref={ref} sx={{ minHeight: isMobile ? 120 : 70, display: "flex", justifyContent: "center" }} />;
 }

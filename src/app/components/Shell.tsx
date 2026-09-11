@@ -1,5 +1,6 @@
 import {
   AppBar,
+  Avatar,
   Box,
   Button,
   Container,
@@ -10,26 +11,68 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Stack,
   Toolbar,
+  Tooltip,
   Typography,
+  alpha,
   useMediaQuery,
   useTheme,
-  alpha,
-  Avatar,
 } from "@mui/material";
-import { AdminPanelSettings, AssignmentTurnedIn, BugReport, Dashboard, Dns, Logout, ManageAccounts, Menu } from "@mui/icons-material";
-import { useState } from "react";
-import type { ReactNode } from "react";
+import {
+  AdminPanelSettings,
+  AssignmentTurnedIn,
+  BugReport,
+  DarkMode,
+  Dashboard,
+  Dns,
+  LightMode,
+  Logout,
+  ManageAccounts,
+  Menu,
+  SettingsBrightness,
+} from "@mui/icons-material";
+import { useState, type ReactNode } from "react";
 import type { PublicUser } from "../../shared/types";
+import { useColorMode, type ColorModePreference } from "../color-mode";
 
 export type ViewKey = "dashboard" | "applications" | "account" | "admin" | "abuse";
 
-const nav = [
+const DRAWER_WIDTH = 280;
+
+const baseNav = [
   { key: "dashboard", label: "解析记录", icon: <Dns /> },
   { key: "applications", label: "申请历史", icon: <AssignmentTurnedIn /> },
   { key: "account", label: "账户安全", icon: <ManageAccounts /> },
   { key: "abuse", label: "滥用举报", icon: <BugReport /> },
-] as const;
+] as const satisfies readonly { key: ViewKey; label: string; icon: ReactNode }[];
+
+const adminNav = { key: "admin", label: "系统管理", icon: <AdminPanelSettings /> } as const;
+
+const colorModeCycle: Record<ColorModePreference, ColorModePreference> = {
+  system: "light",
+  light: "dark",
+  dark: "system",
+};
+
+const colorModeLabel: Record<ColorModePreference, string> = {
+  system: "跟随系统",
+  light: "浅色",
+  dark: "深色",
+};
+
+function ColorModeButton() {
+  const { preference, setPreference } = useColorMode();
+  const icon = preference === "light" ? <LightMode /> : preference === "dark" ? <DarkMode /> : <SettingsBrightness />;
+
+  return (
+    <Tooltip title={`外观：${colorModeLabel[preference]}（点击切换）`}>
+      <IconButton onClick={() => setPreference(colorModeCycle[preference])} aria-label={`外观：${colorModeLabel[preference]}，点击切换`}>
+        {icon}
+      </IconButton>
+    </Tooltip>
+  );
+}
 
 export function Shell({
   user,
@@ -48,15 +91,18 @@ export function Shell({
   const wide = useMediaQuery(theme.breakpoints.up("md"));
   const [open, setOpen] = useState(false);
 
+  const nav: readonly { key: ViewKey; label: string; icon: ReactNode }[] = user.role === "admin" ? [...baseNav, adminNav] : baseNav;
+  const activeLabel = nav.find((item) => item.key === view)?.label ?? "控制面板";
+
   const drawer = (
-    <Box sx={{ width: 280, p: 2, display: "flex", flexDirection: "column", height: "100%" }}>
+    <Box sx={{ width: DRAWER_WIDTH, p: 2, display: "flex", flexDirection: "column", height: "100%" }}>
       <Box sx={{ px: 2, py: 3, display: "flex", alignItems: "center", gap: 2 }}>
         <Dashboard color="primary" sx={{ fontSize: 32 }} />
         <Typography variant="h5" sx={{ fontWeight: 800, letterSpacing: -1 }}>
           NekoDNS
         </Typography>
       </Box>
-      <List sx={{ flex: 1 }}>
+      <List sx={{ flex: 1 }} component="nav" aria-label="主导航">
         {nav.map((item) => (
           <ListItemButton
             key={item.key}
@@ -71,42 +117,17 @@ export function Shell({
               mx: 1,
               px: 3,
               "&.Mui-selected": {
-                bgcolor: alpha(theme.palette.primary.main, 0.12),
-                color: theme.palette.primary.main,
-                "& .MuiListItemIcon-root": { color: theme.palette.primary.main },
-                "&:hover": { bgcolor: alpha(theme.palette.primary.main, 0.18) },
+                bgcolor: "primaryContainer",
+                color: "onPrimaryContainer",
+                "& .MuiListItemIcon-root": { color: "onPrimaryContainer" },
+                "&:hover": { bgcolor: alpha(theme.palette.primary.main, 0.24) },
               },
             }}
           >
-            <ListItemIcon sx={{ minWidth: 44 }}>{item.icon}</ListItemIcon>
-            <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: view === item.key ? 700 : 500 }} />
+            <ListItemIcon sx={{ minWidth: 44, color: "inherit" }}>{item.icon}</ListItemIcon>
+            <ListItemText primary={item.label} slotProps={{ primary: { fontWeight: view === item.key ? 700 : 500 } }} />
           </ListItemButton>
         ))}
-        {user.role === "admin" && (
-          <ListItemButton
-            selected={view === "admin"}
-            onClick={() => {
-              onView("admin");
-              setOpen(false);
-            }}
-            sx={{
-              borderRadius: 999,
-              mb: 1,
-              mx: 1,
-              px: 3,
-              "&.Mui-selected": {
-                bgcolor: alpha(theme.palette.primary.main, 0.12),
-                color: theme.palette.primary.main,
-                "& .MuiListItemIcon-root": { color: theme.palette.primary.main },
-              },
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 44 }}>
-              <AdminPanelSettings />
-            </ListItemIcon>
-            <ListItemText primary="系统管理" primaryTypographyProps={{ fontWeight: view === "admin" ? 700 : 500 }} />
-          </ListItemButton>
-        )}
       </List>
       <Divider sx={{ my: 2, mx: 2, opacity: 0.5 }} />
       <Box sx={{ p: 1 }}>
@@ -116,7 +137,12 @@ export function Shell({
           variant="text"
           color="inherit"
           onClick={onLogout}
-          sx={{ borderRadius: 999, py: 1.5, opacity: 0.7, "&:hover": { opacity: 1, bgcolor: alpha(theme.palette.error.main, 0.08), color: "error.main" } }}
+          sx={{
+            borderRadius: 999,
+            py: 1.5,
+            opacity: 0.7,
+            "&:hover": { opacity: 1, bgcolor: alpha(theme.palette.error.main, 0.08), color: "error.main" },
+          }}
         >
           安全退出
         </Button>
@@ -127,29 +153,31 @@ export function Shell({
   return (
     <Box sx={{ minHeight: "100vh", display: "flex", bgcolor: "background.default" }}>
       {wide && (
-        <Box component="aside" sx={{ width: 280, borderRight: `1px solid ${alpha(theme.palette.divider, 0.3)}`, position: "fixed", height: "100vh" }}>
+        <Box
+          component="aside"
+          sx={{ width: DRAWER_WIDTH, borderRight: `1px solid ${theme.palette.divider}`, position: "fixed", height: "100vh" }}
+        >
           {drawer}
         </Box>
       )}
-      <Drawer open={open} onClose={() => setOpen(false)} PaperProps={{ sx: { borderRadius: "0 24px 24px 0" } }}>
+      <Drawer open={open} onClose={() => setOpen(false)} slotProps={{ paper: { sx: { borderRadius: "0 24px 24px 0" } } }}>
         {drawer}
       </Drawer>
-      
-      <Box sx={{ flex: 1, ml: wide ? "280px" : 0 }}>
-        <AppBar position="sticky" elevation={0} sx={{ borderBottom: `1px solid ${alpha(theme.palette.divider, 0.2)}` }}>
-          <Toolbar sx={{ px: { xs: 2, md: 4 } }}>
+
+      <Box sx={{ flex: 1, minWidth: 0, ml: wide ? `${DRAWER_WIDTH}px` : 0 }}>
+        <AppBar position="sticky" elevation={0}>
+          <Toolbar sx={{ px: { xs: 2, md: 4 }, gap: 1 }}>
             {!wide && (
-              <IconButton onClick={() => setOpen(true)} edge="start" sx={{ mr: 2 }}>
+              <IconButton onClick={() => setOpen(true)} edge="start" aria-label="打开导航菜单">
                 <Menu />
               </IconButton>
             )}
-            <Box sx={{ flexGrow: 1 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, display: { xs: "none", sm: "block" } }}>
-                控制面板
-              </Typography>
-            </Box>
-            <Stack direction="row" spacing={2} alignItems="center">
-              <Box sx={{ textAlign: "right" }}>
+            <Typography variant="subtitle1" sx={{ flexGrow: 1, fontWeight: 700, minWidth: 0 }} noWrap>
+              {activeLabel}
+            </Typography>
+            <ColorModeButton />
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Box sx={{ textAlign: "right", display: { xs: "none", sm: "block" } }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
                   {user.username}
                 </Typography>
@@ -157,7 +185,7 @@ export function Shell({
                   {user.role === "admin" ? "系统管理员" : "普通用户"}
                 </Typography>
               </Box>
-              <Avatar sx={{ bgcolor: "primary.main", width: 36, height: 36, fontSize: "0.875rem", fontWeight: 700 }}>
+              <Avatar sx={{ bgcolor: "primary.main", color: "primary.contrastText", width: 36, height: 36, fontSize: "0.875rem", fontWeight: 700 }}>
                 {user.username.slice(0, 1).toUpperCase()}
               </Avatar>
             </Stack>
@@ -170,5 +198,3 @@ export function Shell({
     </Box>
   );
 }
-
-import { Stack } from "@mui/material";

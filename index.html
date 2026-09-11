@@ -4,14 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="NekoDNS —— 基于 Cloudflare Workers 的 Serverless 二级域名托管服务。" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F9FAEF" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#12140E" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23386A20'/%3E%3Cpath d='M8 23V9l7.5 9.2V9h2.3v14h-2.2L8.3 13.8V23z' fill='%23B8F397'/%3E%3Ccircle cx='23' cy='20.5' r='2.2' fill='%23B8F397'/%3E%3C/svg%3E"
+    />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+      content="default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
     />
     <title>NekoDNS</title>
+    <style>
+      /* Paints the right ground colour before React boots, so a dark-mode user never
+         gets a white flash. MUI takes over once CssBaseline mounts. */
+      html,
+      body {
+        margin: 0;
+        background-color: #f9faef;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background-color: #12140e;
+        }
+      }
+      #boot {
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        font-family: "Inter", "Noto Sans SC", system-ui, sans-serif;
+        color: #74796c;
+        font-size: 0.9375rem;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot">正在加载 NekoDNS…</div>
+    </div>
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; padding: 24px">NekoDNS 需要启用 JavaScript 才能使用。</p>
+    </noscript>
     <script type="module" src="/src/app/main.tsx"></script>
   </body>
 </html>

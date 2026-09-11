@@ -1,14 +1,15 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { CssBaseline, ThemeProvider } from "@mui/material";
 import App from "./App";
-import { createNekoTheme } from "./theme";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ThemeRoot } from "./components/ThemeRoot";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <ThemeProvider theme={createNekoTheme()}>
-      <CssBaseline />
-      <App />
-    </ThemeProvider>
+    <ThemeRoot>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </ThemeRoot>
   </React.StrictMode>,
 );
