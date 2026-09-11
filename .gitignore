@@ -4,4 +4,5 @@ dist
 .npm-cache
 .dev.vars
 .env
-migrations/import-old-data.sql
+# Generated from the legacy database: contains real emails and password hashes.
+migrations/import-old-data*.sql
