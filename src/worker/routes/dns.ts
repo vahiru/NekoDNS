@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { AppBindings } from "../env";
 import { audit } from "../audit";
 import { randomId } from "../crypto";
@@ -6,8 +6,30 @@ import { jsonError, requireUser } from "../http";
 import { enqueueJob } from "../jobs";
 import { dnsApplicationSchema, isCoreRecordChange, normalizeRecordName, validateRecordContent } from "../../shared/dns";
 
+const MAX_PENDING_APPLICATIONS = 5;
+
 const dns = new Hono<AppBindings>();
 dns.use("*", requireUser);
+
+/**
+ * A name is unavailable when an active record holds it, or when another user already has a
+ * pending application for it. `exceptRecordId` lets an update keep its own name.
+ */
+async function isNameTaken(c: Context<AppBindings>, fullName: string, exceptRecordId?: string) {
+  const record = await c.env.DB.prepare("SELECT id FROM dns_records WHERE name = ? AND status != 'deleted'")
+    .bind(fullName)
+    .first<{ id: string }>();
+  if (record && record.id !== exceptRecordId) return true;
+
+  const pending = await c.env.DB.prepare(
+    `SELECT id FROM applications
+     WHERE subdomain = ? AND status IN ('pending', 'approved', 'applying')
+       AND (target_dns_record_id IS NULL OR target_dns_record_id != ?)`,
+  )
+    .bind(fullName, exceptRecordId ?? "")
+    .first<{ id: string }>();
+  return Boolean(pending);
+}
 
 dns.get("/dns/records", async (c) => {
   const user = c.get("user");
@@ -38,8 +60,14 @@ dns.post("/dns/applications", async (c) => {
     return jsonError(c, 400, error instanceof Error ? error.message : "DNS 记录无效。");
   }
 
-  const existing = await c.env.DB.prepare("SELECT id FROM dns_records WHERE name = ? AND status != 'deleted'").bind(fullName).first();
-  if (existing) return jsonError(c, 409, "该域名已存在。");
+  if (await isNameTaken(c, fullName)) return jsonError(c, 409, "该域名已存在或已有待审批的申请。");
+
+  const pendingCount = await c.env.DB.prepare("SELECT COUNT(*) AS total FROM applications WHERE user_id = ? AND status = 'pending'")
+    .bind(user.id)
+    .first<{ total: number }>();
+  if ((pendingCount?.total ?? 0) >= MAX_PENDING_APPLICATIONS) {
+    return jsonError(c, 429, `您已有 ${MAX_PENDING_APPLICATIONS} 个待审批的申请，请等待处理后再提交。`);
+  }
 
   const appId = randomId("app");
   await c.env.DB.prepare(
@@ -78,6 +106,10 @@ dns.put("/dns/records/:id", async (c) => {
     return jsonError(c, 400, error instanceof Error ? error.message : "DNS 记录无效。");
   }
 
+  if (fullName !== record.name && (await isNameTaken(c, fullName, record.id))) {
+    return jsonError(c, 409, "该域名已存在或已有待审批的申请。");
+  }
+
   const coreChanged = isCoreRecordChange(record, { type: parsed.data.type, name: fullName, content: parsed.data.content });
   const appId = randomId("app");
   await c.env.DB.prepare(
@@ -99,6 +131,7 @@ dns.delete("/dns/records/:id", async (c) => {
     .bind(recordId, user.id)
     .first();
   if (!record) return jsonError(c, 404, "记录不存在或无权删除。");
+  await c.env.DB.prepare("UPDATE dns_records SET status = 'suspended', updated_at = datetime('now') WHERE id = ?").bind(recordId).run();
   await enqueueJob(c, "dns_delete", { recordId });
   await audit(c, "dns.record.delete", "dns_record", recordId);
   return c.json({ message: "删除任务已提交。" }, 202);

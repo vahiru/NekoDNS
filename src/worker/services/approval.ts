@@ -2,8 +2,16 @@ import type { Context } from "hono";
 import type { AppBindings, Env } from "../env";
 import type { VoteType } from "../../shared/types";
 import { randomId } from "../crypto";
-import { enqueueJob, enqueueJobEnv } from "../jobs";
+import { enqueueJobEnv } from "../jobs";
 import { applicationResultEmail } from "./email";
+
+/**
+ * A single approval is enough to let an application through, while rejecting takes two.
+ * Intentionally asymmetric: the cost of a wrong approval is a DNS record that can be revoked,
+ * the cost of a wrong rejection is a user who has to start over.
+ */
+const APPROVALS_TO_ACCEPT = 1;
+const DENIALS_TO_REJECT = 2;
 
 export async function castVote(c: Context<AppBindings>, applicationId: string, voteType: VoteType, source: "web" | "telegram", telegramUserId?: string) {
   const user = c.get("user");
@@ -22,8 +30,8 @@ export async function castVote(c: Context<AppBindings>, applicationId: string, v
     .run();
 
   const tally = await getVoteTally(c.env, applicationId);
-  if (tally.approve >= 1) await decideApplication(c.env, applicationId, "approved", `管理员 ${user.username} 批准`);
-  if (tally.deny >= 2) await decideApplication(c.env, applicationId, "rejected", `2 票拒绝`);
+  if (tally.approve >= APPROVALS_TO_ACCEPT) await decideApplication(c.env, applicationId, "approved", `管理员 ${user.username} 批准`);
+  else if (tally.deny >= DENIALS_TO_REJECT) await decideApplication(c.env, applicationId, "rejected", `${tally.deny} 票拒绝`);
   return tally;
 }
 
@@ -35,7 +43,7 @@ export async function decideApplication(env: Env, applicationId: string, status:
   )
     .bind(applicationId)
     .first<{ id: string; status: string; subdomain: string; email: string; telegram_message_id: string | null }>();
-  if (!app || app.status !== "pending") return;
+  if (!app || app.status !== "pending") return false;
 
   await env.DB.prepare("UPDATE applications SET status = ?, admin_notes = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(status, reason, applicationId)
@@ -47,23 +55,18 @@ export async function decideApplication(env: Env, applicationId: string, status:
     await enqueueJobEnv(env, "email", {
       to: app.email,
       subject: `域名申请${status === "rejected" ? "被拒绝" : "已过期"}：${app.subdomain}`,
-      html: applicationResultEmail(app.subdomain, status === "rejected" ? "被拒绝" : "已过期", reason),
+      html: applicationResultEmail(app.subdomain, status === "rejected" ? "rejected" : "expired", reason),
     });
   }
 
   if (app.telegram_message_id) {
     await enqueueJobEnv(env, "telegram_edit", {
       messageId: app.telegram_message_id,
-      text: `申请 \`${app.subdomain}\` 已${status === "approved" ? "批准" : status === "rejected" ? "拒绝" : "过期"}。\n原因：${reason}`,
+      text: `申请 ${app.subdomain} 已${status === "approved" ? "批准" : status === "rejected" ? "拒绝" : "过期"}。\n原因：${reason}`,
     });
   }
-}
 
-export async function decideApplicationFromContext(c: Context<AppBindings>, applicationId: string, status: "approved" | "rejected", reason: string) {
-  await c.env.DB.prepare("UPDATE applications SET status = ?, admin_notes = ?, updated_at = datetime('now') WHERE id = ?")
-    .bind(status, reason, applicationId)
-    .run();
-  if (status === "approved") await enqueueJob(c, "dns_apply", { applicationId });
+  return true;
 }
 
 export async function getVoteTally(env: Env, applicationId: string) {

@@ -61,3 +61,74 @@ function isValidIpv6(value: string) {
 
   return parts.length === 2 ? groupCount < 8 : groupCount === 8;
 }
+
+const reservedLabels = new Set([
+  "admin",
+  "api",
+  "abuse",
+  "dashboard",
+  "mail",
+  "smtp",
+  "imap",
+  "pop",
+  "pop3",
+  "root",
+  "status",
+  "support",
+  "webmail",
+  "ns",
+  "ns1",
+  "ns2",
+]);
+
+/**
+ * Control labels that must not sit directly under the parent domain: `_acme-challenge.<parent>`
+ * would let its owner issue certificates for the apex, `_dmarc.<parent>` would let them rewrite
+ * mail policy. Deeper down they are legitimate -- `_acme-challenge.myapp.<parent>` only proves
+ * control of a subdomain the applicant already owns -- so these are checked on the last label only.
+ */
+const reservedApexControlLabels = new Set(["_acme-challenge", "_dmarc", "_domainkey", "_mta-sts", "_smtp"]);
+
+export function normalizeRecordName(input: string, parentDomain: string): string {
+  const parent = parentDomain.toLowerCase().replace(/\.$/, "");
+  let name = input.trim().toLowerCase().replace(/\.$/, "");
+
+  if (name === "" || name === "@" || name === parent) {
+    throw new Error("不允许申请根域名记录。");
+  }
+
+  if (name.endsWith(`.${parent}`)) {
+    name = name.slice(0, -parent.length - 1);
+  }
+
+  if (name.includes("..") || name.includes("*")) {
+    throw new Error("域名不能包含空标签或通配符。");
+  }
+
+  const labels = name.split(".");
+  if (labels.length > 6) {
+    throw new Error("子域名层级过深。");
+  }
+
+  for (const label of labels) {
+    const allowUnderscore = label.startsWith("_");
+    const pattern = allowUnderscore ? /^_[a-z0-9-]{1,62}$/ : /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+    if (!pattern.test(label)) {
+      throw new Error(`无效的域名标签：${label}`);
+    }
+  }
+
+  // The label directly under the parent owns the whole subtree, so `www.admin` has to be
+  // rejected just like `admin`; the leftmost label is still checked for backwards compatibility.
+  const parentChildLabel = labels[labels.length - 1];
+  for (const label of new Set([labels[0], parentChildLabel])) {
+    if (reservedLabels.has(label)) {
+      throw new Error(`保留名称不可申请：${label}`);
+    }
+  }
+  if (reservedApexControlLabels.has(parentChildLabel)) {
+    throw new Error(`保留名称不可申请：${parentChildLabel}`);
+  }
+
+  return `${name}.${parent}`;
+}

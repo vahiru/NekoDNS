@@ -8,6 +8,8 @@ interface EmailPayload {
   html?: unknown;
 }
 
+export type ApplicationOutcome = "approved" | "rejected" | "expired" | "failed";
+
 interface VerificationEmailOptions {
   title?: string;
   intro?: string;
@@ -57,7 +59,7 @@ export async function sendSystemEmail(env: Env, payload: Record<string, unknown>
     return;
   }
 
-  if (!env.MAILER) return;
+  if (!env.MAILER) throw new Error("No email transport configured (set RESEND_API_KEY, SMTP_*, or bind MAILER).");
 
   const mime = [
     `From: NekoDNS <${env.EMAIL_FROM}>`,
@@ -239,14 +241,6 @@ export function migrationVerificationEmail(origin: string, token: string, passwo
   `);
 }
 
-export function legacyMigrationVerificationEmail(origin: string, token: string) {
-  return verificationEmail(origin, token, {
-    title: "安全迁移：重新验证您的邮箱",
-    intro: "系统检测到您的账户需要进行安全性迁移。请点击下方按钮重新验证邮箱，随后您将可以设置新的登录密码并继续使用服务。",
-    flow: "migration",
-  });
-}
-
 export function resetPasswordEmail(origin: string, token: string) {
   const url = `${origin}/reset-password?token=${encodeURIComponent(token)}`;
   return wrapLayout(`
@@ -259,18 +253,25 @@ export function resetPasswordEmail(origin: string, token: string) {
   `);
 }
 
-export function applicationResultEmail(domain: string, status: string, reason?: string) {
-  const isApproved = status === "approved" || status === "applied";
-  const statusText = isApproved ? "已通过审批" : "未通过审批";
+const APPLICATION_OUTCOME_TEXT: Record<ApplicationOutcome, string> = {
+  approved: "已通过审批",
+  rejected: "未通过审批",
+  expired: "已超时关闭",
+  failed: "处理失败",
+};
+
+export function applicationResultEmail(domain: string, outcome: ApplicationOutcome, reason?: string) {
+  const isApproved = outcome === "approved";
+  const statusText = APPLICATION_OUTCOME_TEXT[outcome];
   const title = `域名申请处理结果：${statusText}`;
 
   return wrapLayout(`
-    <h1>${title}</h1>
-    <p>您好，关于您申请的域名 <strong>${domain}</strong>，系统处理结果如下：</p>
+    <h1>${escapeHtml(title)}</h1>
+    <p>您好，关于您申请的域名 <strong>${escapeHtml(domain)}</strong>，系统处理结果如下：</p>
     <p style="font-size: 18px; font-weight: bold; color: ${isApproved ? "#386A20" : "#BA1A1A"};">
-      状态：${statusText}
+      状态：${escapeHtml(statusText)}
     </p>
-    ${reason ? `<p><strong>审批说明：</strong>${reason}</p>` : ""}
+    ${reason ? `<p><strong>审批说明：</strong>${escapeHtml(reason)}</p>` : ""}
     ${isApproved ? `<p>现在您可以登录控制面板管理该记录的解析目标。</p>` : `<p>如有疑问，您可以尝试修改申请信息后重新提交。</p>`}
   `);
 }

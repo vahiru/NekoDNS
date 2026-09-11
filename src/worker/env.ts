@@ -1,16 +1,25 @@
 import type { JobMessage } from "../shared/types";
 
+/** Shape of Cloudflare's rate limiting binding. */
+export interface RateLimiter {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+export type RateLimiterName = "AUTH_RATE_LIMITER" | "ABUSE_RATE_LIMITER";
+
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   JOB_QUEUE: Queue<JobMessage>;
+  // Optional so tests and local runs without the binding still work; see enforceRateLimit.
+  AUTH_RATE_LIMITER?: RateLimiter;
+  ABUSE_RATE_LIMITER?: RateLimiter;
   MAILER?: { send(message: unknown): Promise<void> };
   PARENT_DOMAIN: string;
   APP_ORIGIN: string;
   EMAIL_FROM: string;
   TURNSTILE_SITE_KEY: string;
   TURNSTILE_SECRET_KEY: string;
-  SESSION_SECRET: string;
   CF_ZONE_ID: string;
   CF_API_TOKEN: string;
   TELEGRAM_BOT_TOKEN?: string;

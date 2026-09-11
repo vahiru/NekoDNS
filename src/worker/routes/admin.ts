@@ -1,40 +1,74 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { AppBindings } from "../env";
 import { audit } from "../audit";
 import { randomToken, sha256Hex } from "../crypto";
 import { jsonError, requireAdmin, requireUser } from "../http";
 import { enqueueJob } from "../jobs";
+import { applyAbuseAction, isAbuseAction } from "../services/abuse";
 import { castVote, decideApplication, getVoteTally } from "../services/approval";
 import { adminRecordNoticeEmail } from "../services/email";
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+function pageParams(c: Context<AppBindings>) {
+  const requested = Number(c.req.query("limit"));
+  const limit = Number.isFinite(requested) && requested > 0 ? Math.min(Math.trunc(requested), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE;
+  const rawOffset = Number(c.req.query("offset"));
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.trunc(rawOffset) : 0;
+  // Fetch one extra row so hasMore needs no second COUNT query.
+  return { limit, offset, fetchLimit: limit + 1 };
+}
+
+function toPage<Row>(rows: Row[], limit: number, offset: number) {
+  const hasMore = rows.length > limit;
+  return { items: hasMore ? rows.slice(0, limit) : rows, hasMore, offset };
+}
 
 const admin = new Hono<AppBindings>();
 admin.use("*", requireUser, requireAdmin);
 
 admin.get("/admin/users", async (c) => {
+  const { limit, offset, fetchLimit } = pageParams(c);
   const users = await c.env.DB.prepare(
-    "SELECT id, username, email, role, email_verified_at, telegram_user_id, created_at FROM users ORDER BY created_at DESC",
-  ).all();
-  return c.json(users.results);
+    `SELECT id, username, email, role, email_verified_at, telegram_user_id, created_at
+     FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+  )
+    .bind(fetchLimit, offset)
+    .all();
+  return c.json(toPage(users.results, limit, offset));
 });
 
 admin.patch("/admin/users/:id/role", async (c) => {
+  const targetId = c.req.param("id");
   const body = z.object({ role: z.enum(["user", "admin"]) }).safeParse(await c.req.json().catch(() => null));
   if (!body.success) return jsonError(c, 400, "角色无效。");
-  if (c.req.param("id") === c.get("user").id && body.data.role !== "admin") return jsonError(c, 400, "不能降级当前登录的管理员。");
+  if (targetId === c.get("user").id && body.data.role !== "admin") return jsonError(c, 400, "不能降级当前登录的管理员。");
 
-  await c.env.DB.prepare("UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?").bind(body.data.role, c.req.param("id")).run();
-  await audit(c, "admin.user.role", "user", c.req.param("id"), { role: body.data.role });
+  const target = await c.env.DB.prepare("SELECT id, role FROM users WHERE id = ?").bind(targetId).first<{ id: string; role: string }>();
+  if (!target) return jsonError(c, 404, "用户不存在。");
+
+  if (target.role === "admin" && body.data.role !== "admin") {
+    const admins = await c.env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'").first<{ total: number }>();
+    if ((admins?.total ?? 0) <= 1) return jsonError(c, 400, "系统至少需要保留一名管理员。");
+  }
+
+  await c.env.DB.prepare("UPDATE users SET role = ?, updated_at = datetime('now') WHERE id = ?").bind(body.data.role, targetId).run();
+  await audit(c, "admin.user.role", "user", targetId, { role: body.data.role });
   return c.json({ message: "角色已更新。" });
 });
 
 admin.get("/admin/dns-records", async (c) => {
+  const { limit, offset, fetchLimit } = pageParams(c);
   const records = await c.env.DB.prepare(
     `SELECT r.*, u.username, u.email
      FROM dns_records r JOIN users u ON u.id = r.user_id
-     ORDER BY r.created_at DESC`,
-  ).all();
-  return c.json(records.results);
+     ORDER BY r.created_at DESC LIMIT ? OFFSET ?`,
+  )
+    .bind(fetchLimit, offset)
+    .all();
+  return c.json(toPage(records.results, limit, offset));
 });
 
 admin.post("/admin/dns-records/:id/notify-owner", async (c) => {
@@ -67,12 +101,15 @@ admin.post("/admin/dns-records/:id/notify-owner", async (c) => {
 });
 
 admin.get("/admin/applications", async (c) => {
+  const { limit, offset, fetchLimit } = pageParams(c);
   const apps = await c.env.DB.prepare(
     `SELECT a.*, u.username, u.email
      FROM applications a JOIN users u ON u.id = a.user_id
-     ORDER BY a.created_at DESC`,
-  ).all();
-  return c.json(apps.results);
+     ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
+  )
+    .bind(fetchLimit, offset)
+    .all();
+  return c.json(toPage(apps.results, limit, offset));
 });
 
 admin.post("/admin/applications/:id/vote", async (c) => {
@@ -90,7 +127,8 @@ admin.post("/admin/applications/:id/vote", async (c) => {
 admin.post("/admin/applications/:id/decision", async (c) => {
   const body = z.object({ status: z.enum(["approved", "rejected"]), reason: z.string().trim().min(1).max(500) }).safeParse(await c.req.json().catch(() => null));
   if (!body.success) return jsonError(c, 400, "裁决信息无效。");
-  await decideApplication(c.env, c.req.param("id"), body.data.status, body.data.reason);
+  const decided = await decideApplication(c.env, c.req.param("id"), body.data.status, body.data.reason);
+  if (!decided) return jsonError(c, 409, "申请不存在或已处理。");
   await audit(c, "admin.application.decision", "application", c.req.param("id"), body.data);
   return c.json({ message: "裁决已提交。" });
 });
@@ -98,40 +136,34 @@ admin.post("/admin/applications/:id/decision", async (c) => {
 admin.get("/admin/applications/:id/tally", async (c) => c.json(await getVoteTally(c.env, c.req.param("id"))));
 
 admin.get("/admin/abuse-reports", async (c) => {
-  const reports = await c.env.DB.prepare("SELECT * FROM abuse_reports ORDER BY created_at DESC").all();
-  return c.json(reports.results);
+  const { limit, offset, fetchLimit } = pageParams(c);
+  const reports = await c.env.DB.prepare("SELECT * FROM abuse_reports ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .bind(fetchLimit, offset)
+    .all();
+  return c.json(toPage(reports.results, limit, offset));
 });
 
 admin.post("/admin/abuse-reports/:id/:action", async (c) => {
   const action = c.req.param("action");
-  if (!["acknowledge", "suspend", "ignore"].includes(action)) return jsonError(c, 400, "举报处理动作无效。");
+  if (!isAbuseAction(action)) return jsonError(c, 400, "举报处理动作无效。");
 
-  const report = await c.env.DB.prepare("SELECT * FROM abuse_reports WHERE id = ?").bind(c.req.param("id")).first<{ subdomain: string }>();
+  const report = await applyAbuseAction(c.env, c.req.param("id"), action);
   if (!report) return jsonError(c, 404, "举报不存在。");
 
-  if (action === "acknowledge") {
-    await c.env.DB.prepare("UPDATE abuse_reports SET status = 'acknowledged', updated_at = datetime('now') WHERE id = ?").bind(c.req.param("id")).run();
-  }
-  if (action === "ignore") {
-    await c.env.DB.prepare("UPDATE abuse_reports SET status = 'ignored', updated_at = datetime('now') WHERE id = ?").bind(c.req.param("id")).run();
-  }
-  if (action === "suspend") {
-    const record = await c.env.DB.prepare("SELECT id FROM dns_records WHERE name = ? AND status = 'active'").bind(report.subdomain).first<{ id: string }>();
-    if (record) await enqueueJob(c, "dns_delete", { recordId: record.id });
-    await c.env.DB.prepare("UPDATE abuse_reports SET status = 'resolved', updated_at = datetime('now') WHERE id = ?").bind(c.req.param("id")).run();
-  }
-
-  await audit(c, `admin.abuse.${action}`, "abuse_report", c.req.param("id"));
+  await audit(c, `admin.abuse.${action}`, "abuse_report", report.id);
   return c.json({ message: "举报状态已更新。" });
 });
 
 admin.get("/admin/audit-logs", async (c) => {
+  const { limit, offset, fetchLimit } = pageParams(c);
   const logs = await c.env.DB.prepare(
     `SELECT l.*, u.username
      FROM audit_logs l LEFT JOIN users u ON u.id = l.actor_user_id
-     ORDER BY l.created_at DESC LIMIT 200`,
-  ).all();
-  return c.json(logs.results);
+     ORDER BY l.created_at DESC LIMIT ? OFFSET ?`,
+  )
+    .bind(fetchLimit, offset)
+    .all();
+  return c.json(toPage(logs.results, limit, offset));
 });
 
 admin.post("/me/telegram-bind-token", async (c) => {

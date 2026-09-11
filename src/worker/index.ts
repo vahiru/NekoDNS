@@ -53,7 +53,8 @@ app.onError((error, c) => {
   const requestId = c.get("requestId");
   const details = errorDetails(error);
   console.error("Unhandled worker error", { requestId, path: c.req.path, ...details, error });
-  return jsonError(c, 500, `服务器内部错误（${requestId}）：${details.message}`, { requestId, error: details });
+  // The message can carry SQL fragments or upstream payloads; keep it in logs, hand out the id only.
+  return jsonError(c, 500, `服务器内部错误，请将该编号提供给管理员：${requestId}`, { requestId });
 });
 
 app.route("/api", auth);
@@ -77,8 +78,14 @@ export default {
 
   async queue(batch: MessageBatch<JobMessage>, env: Env) {
     for (const message of batch.messages) {
-      await processJob(env, message.body);
-      message.ack();
+      try {
+        await processJob(env, message.body);
+        message.ack();
+      } catch (error) {
+        // Retry just this message; an unhandled throw here would redeliver the whole batch.
+        console.error("Job failed", { jobId: message.body?.id, kind: message.body?.kind, error });
+        message.retry();
+      }
     }
   },
 

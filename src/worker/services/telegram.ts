@@ -1,5 +1,15 @@
 import type { Env } from "../env";
 
+/** Escapes text for Telegram MarkdownV2 (outside code spans). */
+function md(value: unknown) {
+  return String(value ?? "").replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, (char) => `\\${char}`);
+}
+
+/** Wraps text in a MarkdownV2 code span, escaping the two characters that matter inside one. */
+function mdCode(value: unknown) {
+  return `\`${String(value ?? "").replace(/[\\`]/g, (char) => `\\${char}`)}\``;
+}
+
 export async function sendApplicationTelegram(env: Env, applicationId: string) {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_GROUP_CHAT_ID) return;
   const app = await env.DB.prepare(
@@ -14,18 +24,18 @@ export async function sendApplicationTelegram(env: Env, applicationId: string) {
 
   const text = [
     `*新的域名申请*`,
-    `申请人：${app.username}`,
-    `域名：\`${app.subdomain}\``,
-    `类型：${app.record_type}`,
-    `值：\`${app.record_value}\``,
+    `申请人：${md(app.username)}`,
+    `域名：${mdCode(app.subdomain)}`,
+    `类型：${md(app.record_type)}`,
+    `值：${mdCode(app.record_value)}`,
     `代理：${app.proxied ? "开启" : "直连"}`,
-    `用途：${app.purpose || "无"}`,
+    `用途：${md(app.purpose || "无")}`,
   ].join("\n");
 
   const result = await telegramFetch(env, "sendMessage", {
     chat_id: env.TELEGRAM_GROUP_CHAT_ID,
     text,
-    parse_mode: "Markdown",
+    parse_mode: "MarkdownV2",
     reply_markup: {
       inline_keyboard: [
         [{ text: "批准", callback_data: `vote:approve:${applicationId}` }],
@@ -47,8 +57,13 @@ export async function sendAbuseTelegram(env: Env, reportId: string) {
 
   const result = await telegramFetch(env, "sendMessage", {
     chat_id: env.TELEGRAM_GROUP_CHAT_ID,
-    text: `*滥用举报*\n域名：\`${report.subdomain}\`\n原因：${report.reason}\n详情：${report.details || "无"}`,
-    parse_mode: "Markdown",
+    text: [
+      `*滥用举报*`,
+      `域名：${mdCode(report.subdomain)}`,
+      `原因：${md(report.reason)}`,
+      `详情：${md(report.details || "无")}`,
+    ].join("\n"),
+    parse_mode: "MarkdownV2",
     reply_markup: {
       inline_keyboard: [
         [{ text: "受理", callback_data: `abuse:acknowledge:${reportId}` }],
@@ -73,7 +88,6 @@ export async function editTelegramMessage(env: Env, payload: Record<string, unkn
     chat_id: env.TELEGRAM_GROUP_CHAT_ID,
     message_id: messageId,
     text,
-    parse_mode: "Markdown",
     reply_markup: { inline_keyboard: [] },
   });
 }

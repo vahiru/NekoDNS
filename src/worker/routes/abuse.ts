@@ -4,6 +4,7 @@ import type { AppBindings } from "../env";
 import { audit } from "../audit";
 import { randomId } from "../crypto";
 import { clientIp, jsonError } from "../http";
+import { enforceRateLimit, rateLimitIp } from "../rate-limit";
 import { enqueueJob } from "../jobs";
 import { normalizeRecordName } from "../../shared/dns";
 import { verifyTurnstile } from "../services/turnstile";
@@ -11,6 +12,9 @@ import { verifyTurnstile } from "../services/turnstile";
 const abuse = new Hono<AppBindings>();
 
 abuse.post("/report-abuse", async (c) => {
+  const limited = await enforceRateLimit(c, "ABUSE_RATE_LIMITER", rateLimitIp(c));
+  if (limited) return limited;
+
   const body = z
     .object({
       subdomain: z.string().trim().min(1).max(180),

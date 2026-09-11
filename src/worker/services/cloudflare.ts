@@ -13,6 +13,7 @@ interface ApplicationRow {
   ttl: number;
   proxied: number;
   status: string;
+  apply_attempts: number;
   email: string;
 }
 
@@ -21,9 +22,7 @@ interface DnsRecordRow {
   cloudflare_record_id: string | null;
 }
 
-interface DeletedDnsRecordRow extends DnsRecordRow {
-  status: "deleted";
-}
+const RETRYABLE_APPLY_STATUSES = new Set(["approved", "applying", "error"]);
 
 export async function applyDnsApplication(env: Env, applicationId: string) {
   const app = await env.DB.prepare(
@@ -35,9 +34,10 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
     .bind(applicationId)
     .first<ApplicationRow>();
 
-  if (!app || (app.status !== "approved" && app.status !== "applying")) return;
+  if (!app || !RETRYABLE_APPLY_STATUSES.has(app.status)) return;
 
   await env.DB.prepare("UPDATE applications SET status = 'applying', apply_attempts = apply_attempts + 1 WHERE id = ?").bind(app.id).run();
+  const attempt = (app.apply_attempts ?? 0) + 1;
 
   try {
     const payload = {
@@ -49,25 +49,36 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
     };
 
     if (app.request_type === "create") {
-      const deletedRecord = await env.DB.prepare("SELECT id, cloudflare_record_id, status FROM dns_records WHERE name = ? AND status = 'deleted'")
+      const claimed = await env.DB.prepare("SELECT id, status FROM dns_records WHERE name = ?")
         .bind(app.subdomain)
-        .first<DeletedDnsRecordRow>();
+        .first<{ id: string; status: string }>();
+      // Approval can lag the application by hours; someone else may hold the name by now.
+      if (claimed && claimed.status !== "deleted") throw new Error(`域名 ${app.subdomain} 已被占用，无法创建。`);
+
       const response = await cloudflareFetch(env, "dns_records", "POST", payload);
-      if (deletedRecord) {
-        await env.DB.prepare(
-          `UPDATE dns_records
-           SET user_id = ?, type = ?, content = ?, ttl = ?, proxied = ?, cloudflare_record_id = ?, status = 'active', updated_at = datetime('now')
-           WHERE id = ?`,
-        )
-          .bind(app.user_id, app.record_type, app.record_value, app.ttl, app.proxied, response.result.id, deletedRecord.id)
-          .run();
-      } else {
-        await env.DB.prepare(
-          `INSERT INTO dns_records (id, user_id, type, name, content, ttl, proxied, cloudflare_record_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-          .bind(response.result.id, app.user_id, app.record_type, app.subdomain, app.record_value, app.ttl, app.proxied, response.result.id)
-          .run();
+      try {
+        if (claimed) {
+          await env.DB.prepare(
+            `UPDATE dns_records
+             SET user_id = ?, type = ?, content = ?, ttl = ?, proxied = ?, cloudflare_record_id = ?, status = 'active', updated_at = datetime('now')
+             WHERE id = ?`,
+          )
+            .bind(app.user_id, app.record_type, app.record_value, app.ttl, app.proxied, response.result.id, claimed.id)
+            .run();
+        } else {
+          await env.DB.prepare(
+            `INSERT INTO dns_records (id, user_id, type, name, content, ttl, proxied, cloudflare_record_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+            .bind(response.result.id, app.user_id, app.record_type, app.subdomain, app.record_value, app.ttl, app.proxied, response.result.id)
+            .run();
+        }
+      } catch (error) {
+        // The zone already has the record but we cannot track it; undo it rather than orphan it.
+        await cloudflareFetch(env, `dns_records/${response.result.id}`, "DELETE").catch((cleanupError) => {
+          console.error("Failed to roll back orphaned Cloudflare record", { id: response.result.id, cleanupError });
+        });
+        throw error;
       }
     } else if (app.target_dns_record_id) {
       const record = await env.DB.prepare("SELECT id, cloudflare_record_id FROM dns_records WHERE id = ?").bind(app.target_dns_record_id).first<DnsRecordRow>();
@@ -88,18 +99,21 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
     await enqueueJobEnv(env, "email", {
       to: app.email,
       subject: `域名申请已通过：${app.subdomain}`,
-      html: applicationResultEmail(app.subdomain, "已通过"),
+      html: applicationResultEmail(app.subdomain, "approved"),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await env.DB.prepare("UPDATE applications SET status = 'error', last_error = ?, updated_at = datetime('now') WHERE id = ?")
       .bind(message, app.id)
       .run();
-    await enqueueJobEnv(env, "email", {
-      to: app.email,
-      subject: `域名申请处理失败：${app.subdomain}`,
-      html: applicationResultEmail(app.subdomain, "处理失败", message),
-    });
+    // The outbox replays a failed apply several times; the applicant only needs telling once.
+    if (attempt === 1) {
+      await enqueueJobEnv(env, "email", {
+        to: app.email,
+        subject: `域名申请处理失败：${app.subdomain}`,
+        html: applicationResultEmail(app.subdomain, "failed", message),
+      });
+    }
     throw error;
   }
 }
@@ -107,13 +121,20 @@ export async function applyDnsApplication(env: Env, applicationId: string) {
 export async function deleteCloudflareRecord(env: Env, recordId: string) {
   const record = await env.DB.prepare("SELECT id, cloudflare_record_id FROM dns_records WHERE id = ?").bind(recordId).first<DnsRecordRow>();
   if (!record) return;
-  await cloudflareFetch(env, `dns_records/${cloudflareRecordId(record)}`, "DELETE");
+  try {
+    await cloudflareFetch(env, `dns_records/${cloudflareRecordId(record)}`, "DELETE");
+  } catch (error) {
+    // Already gone upstream is the outcome we wanted; anything else still needs a retry.
+    if (!(error instanceof CloudflareNotFoundError)) throw error;
+  }
   await env.DB.prepare("UPDATE dns_records SET status = 'deleted', updated_at = datetime('now') WHERE id = ?").bind(recordId).run();
 }
 
 function cloudflareRecordId(record: DnsRecordRow) {
   return record.cloudflare_record_id || record.id;
 }
+
+class CloudflareNotFoundError extends Error {}
 
 async function cloudflareFetch(env: Env, path: string, method: string, body?: unknown): Promise<{ success: boolean; result: { id: string } }> {
   const response = await fetch(`https://api.cloudflare.com/client/v4/zones/${env.CF_ZONE_ID}/${path}`, {
@@ -125,9 +146,13 @@ async function cloudflareFetch(env: Env, path: string, method: string, body?: un
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const json = (await response.json()) as { success?: boolean; result?: { id: string }; errors?: Array<{ message: string }> };
-  if (!response.ok || !json.success || !json.result) {
-    throw new Error(json.errors?.map((error) => error.message).join("; ") || `Cloudflare API failed: ${response.status}`);
+  const json = (await response.json().catch(() => null)) as
+    | { success?: boolean; result?: { id: string }; errors?: Array<{ message: string }> }
+    | null;
+  if (!response.ok || !json?.success || !json.result) {
+    const message = json?.errors?.map((error) => error.message).join("; ") || `Cloudflare API failed: ${response.status}`;
+    if (response.status === 404) throw new CloudflareNotFoundError(message);
+    throw new Error(message);
   }
   return json as { success: boolean; result: { id: string } };
 }

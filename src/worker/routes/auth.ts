@@ -1,17 +1,45 @@
 import { Hono, type Context } from "hono";
-import { deleteCookie, setCookie } from "hono/cookie";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import type { AppBindings } from "../env";
 import { audit } from "../audit";
 import { hashPassword, randomId, randomToken, sha256Hex, verifyPassword } from "../crypto";
 import { clientIp, jsonError, requireUser } from "../http";
 import { enqueueJob } from "../jobs";
+import { enforceRateLimit, rateLimitIp } from "../rate-limit";
 import { migrationVerificationEmail, resetPasswordEmail, verificationEmail } from "../services/email";
 import { verifyTurnstile } from "../services/turnstile";
 
 const auth = new Hono<AppBindings>();
 
 const USERNAME_REGEX = /^[\p{L}\p{N}_-]+$/u;
+const SESSION_COOKIE = "nekodns_session";
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
+function isUniqueViolation(error: unknown) {
+  return error instanceof Error && /UNIQUE constraint failed/i.test(error.message);
+}
+
+async function createSession(c: Context<AppBindings>, userId: string) {
+  const token = randomToken();
+  await c.env.DB.prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, datetime('now', '+30 days'))")
+    .bind(randomId("ses"), userId, await sha256Hex(token))
+    .run();
+
+  setCookie(c, SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+}
+
+/** Drops every session for the user, then hands the caller a brand new one. */
+async function issueFreshSession(c: Context<AppBindings>, userId: string) {
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId).run();
+  await createSession(c, userId);
+}
 
 function asText(value: unknown) {
   if (typeof value === "string") return value;
@@ -91,6 +119,9 @@ auth.get("/public/config", (c) =>
 );
 
 auth.post("/auth/register", async (c) => {
+  const limited = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `register:${rateLimitIp(c)}`);
+  if (limited) return limited;
+
   const parsed = registerSchema.safeParse(await readAuthBody(c));
   if (!parsed.success) return jsonError(c, 400, "注册信息无效。", parsed.error.flatten());
   const turnstileError = await ensureTurnstile(c, parsed.data.turnstileToken);
@@ -105,13 +136,19 @@ auth.post("/auth/register", async (c) => {
   const verificationToken = randomToken();
   const userId = randomId("usr");
 
-  await c.env.DB.prepare(
-    `INSERT INTO users
-     (id, username, email, password_hash, password_salt, email_verification_token_hash, email_verification_expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+1 hour'))`,
-  )
-    .bind(userId, parsed.data.username, parsed.data.email, password.hash, password.salt, await sha256Hex(verificationToken))
-    .run();
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO users
+       (id, username, email, password_hash, password_salt, email_verification_token_hash, email_verification_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+1 hour'))`,
+    )
+      .bind(userId, parsed.data.username, parsed.data.email, password.hash, password.salt, await sha256Hex(verificationToken))
+      .run();
+  } catch (error) {
+    // Two concurrent registrations can both pass the pre-check; the UNIQUE index is the real guard.
+    if (isUniqueViolation(error)) return jsonError(c, 409, "用户名或邮箱已被注册。");
+    throw error;
+  }
 
   await enqueueJob(c, "email", {
     to: parsed.data.email,
@@ -123,6 +160,9 @@ auth.post("/auth/register", async (c) => {
 });
 
 auth.post("/auth/legacy/reverify", async (c) => {
+  const limited = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `reverify:${rateLimitIp(c)}`);
+  if (limited) return limited;
+
   const body = z
     .object({
       login: z.preprocess(asText, z.string().trim().min(1, "请输入用户名或邮箱。").max(255)),
@@ -169,6 +209,9 @@ auth.post("/auth/legacy/reverify", async (c) => {
 });
 
 auth.get("/auth/verify-email", async (c) => {
+  const limited = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `verify:${rateLimitIp(c)}`);
+  if (limited) return limited;
+
   const token = c.req.query("token");
   const nextToken = c.req.query("nextToken")?.trim();
   const flow = c.req.query("flow")?.trim();
@@ -198,8 +241,15 @@ auth.get("/auth/verify-email", async (c) => {
 });
 
 auth.post("/auth/login", async (c) => {
+  const byIp = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `login-ip:${rateLimitIp(c)}`);
+  if (byIp) return byIp;
+
   const parsed = loginSchema.safeParse(await readAuthBody(c));
   if (!parsed.success) return jsonError(c, 400, "登录信息无效。");
+
+  const byAccount = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `login-account:${parsed.data.login.toLowerCase()}`);
+  if (byAccount) return byAccount;
+
   const turnstileError = await ensureTurnstile(c, parsed.data.turnstileToken);
   if (turnstileError) return turnstileError;
 
@@ -216,10 +266,10 @@ auth.post("/auth/login", async (c) => {
     }>();
 
   if (user?.password_salt === "legacy-bcrypt") {
+    // Deliberately no email/username here: this branch runs before the password is checked,
+    // so echoing them back would let anyone harvest addresses from a username guess.
     return jsonError(c, 409, "由于服务端架构重构，您需要重新验证邮箱并重新设置登录密码后才能继续登录。", {
       code: "legacy_migration_required",
-      email: user.email,
-      username: user.username,
     });
   }
 
@@ -228,28 +278,17 @@ auth.post("/auth/login", async (c) => {
   }
   if (!user.email_verified_at) return jsonError(c, 403, "请先验证邮箱。");
 
-  const token = randomToken();
-  await c.env.DB.prepare("INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, datetime('now', '+30 days'))")
-    .bind(randomId("ses"), user.id, await sha256Hex(token))
-    .run();
-
-  setCookie(c, "nekodns_session", token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
+  await createSession(c, user.id);
   await audit(c, "auth.login", "user", user.id);
   return c.json({ message: "登录成功。" });
 });
 
 auth.post("/auth/logout", requireUser, async (c) => {
-  const token = c.req.header("Cookie")?.match(/nekodns_session=([^;]+)/)?.[1];
+  const token = getCookie(c, SESSION_COOKIE);
   if (token) {
-    await c.env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(decodeURIComponent(token))).run();
+    await c.env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256Hex(token)).run();
   }
-  deleteCookie(c, "nekodns_session", { path: "/" });
+  deleteCookie(c, SESSION_COOKIE, { path: "/" });
   await audit(c, "auth.logout");
   return c.json({ message: "已登出。" });
 });
@@ -297,12 +336,16 @@ auth.post("/me/change-password", requireUser, async (c) => {
   await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_salt = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(password.hash, password.salt, user.id)
     .run();
+  await issueFreshSession(c, user.id);
 
   await audit(c, "auth.change_password", "user", user.id);
-  return c.json({ message: "密码已更新。" });
+  return c.json({ message: "密码已更新，其他设备上的登录状态已失效。" });
 });
 
 auth.post("/auth/forgot-password", async (c) => {
+  const limited = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `forgot:${rateLimitIp(c)}`);
+  if (limited) return limited;
+
   const body = z
     .object({
       email: z.preprocess(asText, z.string().trim().email("邮箱格式不正确。")),
@@ -332,6 +375,9 @@ auth.post("/auth/forgot-password", async (c) => {
 });
 
 auth.post("/auth/reset-password", async (c) => {
+  const limited = await enforceRateLimit(c, "AUTH_RATE_LIMITER", `reset:${rateLimitIp(c)}`);
+  if (limited) return limited;
+
   const body = z
     .object({
       token: z.preprocess(asText, z.string().trim().min(1, "重置令牌不能为空。")),
@@ -349,15 +395,27 @@ auth.post("/auth/reset-password", async (c) => {
   if (turnstileError) return turnstileError;
 
   const password = await hashPassword(body.data.password);
-  const result = await c.env.DB.prepare(
-    `UPDATE users
-     SET password_hash = ?, password_salt = ?, password_reset_token_hash = NULL, password_reset_expires_at = NULL
+  const tokenHash = await sha256Hex(body.data.token);
+  const owner = await c.env.DB.prepare(
+    `SELECT id FROM users
      WHERE password_reset_token_hash = ? AND datetime(password_reset_expires_at) > datetime('now')`,
   )
-    .bind(password.hash, password.salt, await sha256Hex(body.data.token))
+    .bind(tokenHash)
+    .first<{ id: string }>();
+  if (!owner) return jsonError(c, 400, "重置链接无效或已过期。");
+
+  await c.env.DB.prepare(
+    `UPDATE users
+     SET password_hash = ?, password_salt = ?, password_reset_token_hash = NULL, password_reset_expires_at = NULL,
+         updated_at = datetime('now')
+     WHERE id = ?`,
+  )
+    .bind(password.hash, password.salt, owner.id)
     .run();
-  if (!result.meta.changes) return jsonError(c, 400, "重置链接无效或已过期。");
-  return c.json({ message: "密码已更新。" });
+  // A reset is the recovery path for a compromised account: every existing session must die.
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(owner.id).run();
+  await audit(c, "auth.reset_password", "user", owner.id);
+  return c.json({ message: "密码已更新，所有设备的登录状态已失效。" });
 });
 
 export default auth;
